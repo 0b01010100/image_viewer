@@ -1,0 +1,242 @@
+{
+	"servers": {
+		"clangd": {
+			"installed": null,
+			"enabled": null,
+			"settingValues": {
+				"background_index": null,
+				"clang_tidy": null,
+				"query_driver": null,
+				"compile_commands_dir": null,
+				"enable_config": null,
+				"all_scopes_completion": null,
+				"function_arg_placeholders": null,
+				"header_insertion": null,
+				"completion_style": null
+			}
+		},
+		"rust": {
+			"installed": null,
+			"enabled": null,
+			"settingValues": {
+				"build_scripts": null,
+				"cargo_features": null,
+				"all_targets": null,
+				"check_on_save": null,
+				"all_features": null,
+				"proc_macros": null,
+				"diagnostics": null,
+				"check_command": null
+			}
+		},
+		"ccls": {
+			"installed": null,
+			"enabled": null,
+			"settingValues": {
+				"compilation_database_directory": null,
+				"index_threads": null,
+				"detailed_label": null,
+				"index_on_change": null
+			}
+		},
+		"neocmakelsp": {
+			"installed": null,
+			"enabled": null,
+			"settingValues": {
+				"semantic_tokens": null,
+				"format_enable": null,
+				"lint_enable": null,
+				"scan_cmake_in_package": null
+			}
+		},
+		"devicetree": {
+			"installed": null,
+			"enabled": null,
+			"settingValues": {
+				"workspace": null,
+				"include_paths": null,
+				"zephyr_bindings": null,
+				"disable_file_watchers": null,
+				"auto_add_properties": null,
+				"auto_change_context": null,
+				"allow_adhoc_contexts": null,
+				"binding_type": null
+			}
+		},
+		"kconfig": {
+			"installed": null,
+			"enabled": null,
+			"settingValues": {}
+		},
+		"cppcheck": {
+			"installed": null,
+			"enabled": null,
+			"settingValues": {
+				"compile_database": null,
+				"platform": null,
+				"include_paths": null,
+				"defines": null,
+				"check_level": null,
+				"max_configs": null,
+				"libraries": null,
+				"suppressions_file": null,
+				"misra_rule_texts": null,
+				"per_file_compliance": null,
+				"build_cache": null,
+				"analysis_concurrency": null,
+				"analysis_batch_size": null,
+				"analysis_timeout_seconds": null,
+				"supporting_checks": null,
+				"analysis_exclude_directories": null,
+				"inconclusive": null,
+				"inline_suppr": null,
+				"enable_set": null,
+				"std": null
+			}
+		},
+		"clang-tidy": {
+			"installed": null,
+			"enabled": null,
+			"settingValues": {
+				"analysis_concurrency": null,
+				"analysis_timeout_seconds": null,
+				"supporting_checks": null,
+				"cert_priority_map": null,
+				"analysis_exclude_directories": null,
+				"quiet": null,
+				"compile_database_directory": null,
+				"config_file": null,
+				"system_headers": null,
+				"checks_preset": null
+			}
+		},
+		"perforce-qac": {
+			"installed": null,
+			"enabled": null,
+			"settingValues": {
+				"project_dir": null,
+				"config_name": null,
+				"project_name": null,
+				"first_party_roots": null,
+				"target_language": null,
+				"sync_method": null,
+				"build_command": null,
+				"compile_database": null,
+				"build_log": null,
+				"bazel_command": null,
+				"generate_cct": null,
+				"sync_include_syntax": null,
+				"sync_define_syntax": null,
+				"sync_flag_script": null,
+				"sync_exclude_pattern": null,
+				"sync_exclude_processes": null,
+				"sync_file_filter": null,
+				"sync_suppress_include_paths": null,
+				"compliance_profile": null,
+				"secondary_components": null,
+				"name_rule_file": null,
+				"cma_solution": null,
+				"cct_c": null,
+				"cct_cpp": null,
+				"cct_rust": null,
+				"rcf_file": null,
+				"acf_file": null,
+				"source_root": null,
+				"vcs_config": null,
+				"skip_components": null,
+				"inter_tu_dataflow": null,
+				"dataflow_preset": null,
+				"failure_policy": null,
+				"analysis_retry": null,
+				"analysis_workers": null,
+				"cip_generation": null,
+				"cip_ignore_error": null,
+				"log_location": null,
+				"baseline_type": null,
+				"suppression_sources": null,
+				"min_severity": null,
+				"report_types": null,
+				"report_path_format": null,
+				"report_jobs": null,
+				"report_directory": null,
+				"validate_enabled": null,
+				"validate_url": null,
+				"validate_project": null,
+				"validate_push_on_connect": null,
+				"validate_auto_sync_rules": null,
+				"validate_auto_sync_diagnostics": null,
+				"validate_auto_sync_suppressions": null,
+				"validate_path_format": null,
+				"validate_rcf_update": null
+			}
+		},
+		"parasoft-cpptest": {
+			"installed": null,
+			"enabled": null,
+			"settingValues": {
+				"input_strategy": null,
+				"input_path": null,
+				"build_command": null,
+				"compile_command": null,
+				"compiler": null,
+				"test_configuration": null,
+				"custom_test_configuration": null,
+				"settings_file": null,
+				"workspace_directory": null,
+				"license_mode": null,
+				"license_settings_file": null,
+				"network_license_edition": null,
+				"license_server_url": null,
+				"license_wait_minutes": null,
+				"report_formats": null,
+				"report_directory": null,
+				"fail_on_violations": null,
+				"fail_on_setup_problems": null,
+				"baseline_report": null,
+				"suppressions_file": null,
+				"publish_to_dtp": null,
+				"dtp_url": null,
+				"dtp_project": null
+			}
+		},
+		"shellcheck": {
+			"installed": null,
+			"enabled": null,
+			"settingValues": {
+				"external_sources": null,
+				"source_paths": null,
+				"optional_checks": null,
+				"severity": null,
+				"shell": null
+			}
+		},
+		"coverity": {
+			"installed": null,
+			"enabled": null,
+			"settingValues": {
+				"workflow": null,
+				"analysis_location": null,
+				"license_source": null,
+				"security_file": null,
+				"license_config_file": null,
+				"license_server": null,
+				"wait_for_license": null,
+				"config_file": null,
+				"intermediate_dir": null,
+				"build_command": null,
+				"compiler": null,
+				"compiler_type": null,
+				"checker_profile": null,
+				"aggressiveness": null,
+				"jobs": null,
+				"coding_standard_config": null,
+				"result_destination": null,
+				"local_format": null,
+				"local_output": null,
+				"connect_url": null,
+				"stream": null,
+				"auth_key_file": null
+			}
+		}
+	}
+}

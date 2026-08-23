@@ -1,0 +1,4 @@
+CompileFlags:
+  CompilationDatabase: .
+  Add:
+    - -std=c23
