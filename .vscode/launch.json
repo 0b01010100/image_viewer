@@ -8,8 +8,8 @@
       "args": [],
       "stopAtEntry": false,
       "externalConsole": false,
-      "cwd": "/run/media/joshinsteam/MYGOAL/image_viewer/src/window/platform",
-      "program": "/run/media/joshinsteam/MYGOAL/image_viewer/src/window/platform/build/Debug/outDebug",
+      "cwd": "/home/joshinsteam/Documents/image_viewer1/src/core/platform",
+      "program": "/home/joshinsteam/Documents/image_viewer1/src/core/platform/build/Debug/outDebug",
       "MIMode": "gdb",
       "miDebuggerPath": "gdb",
       "setupCommands": [

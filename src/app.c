@@ -4,7 +4,8 @@
 #include "core/image/stbi_image.h"
 #include "core/platform/platform.h"
 
-bitmap bm;
+bitmap bm; 
+bitmap clear_bm;
 graphics_context_handle gch;
 b8 is_running = true;
 void window_resize_hook(vwindow *const state, int width, int height) {
@@ -17,8 +18,11 @@ void window_render_hook(vwindow *const state) {
       (state->width > bm.width) ? (state->width - bm.width) / 2 : 0;
   u32 const center_y =
       (state->height > bm.height) ? (state->height - bm.height) / 2 : 0;
-  //platform_graphics_context_put_image(&gch, bm, center_x, center_y);
-  platform_window_present_frame(state, bm.pixels, bm.width, bm.height, bm.stride, center_x, center_y, true);
+
+  platform_graphics_context_put_image(&gch, clear_bm, center_x, center_y);
+
+  platform_graphics_context_put_image(&gch, bm, center_x, center_y);
+  //platform_window_present_frame(state, bm.pixels, bm.width, bm.height, bm.stride, center_x, center_y, true);
 
 }
 
@@ -67,7 +71,7 @@ int main(void) {
   }
   printf("Window Created\n");
 
-  //platform_graphics_context_create(&gch, &wh);
+  platform_graphics_context_create(&gch, &wh);
   Image src = {
       .width = bm.width, .height = bm.height, .pixels = (u32 *)bm.pixels};
 
@@ -87,6 +91,20 @@ int main(void) {
                 .stride = dst.width * 4,
                 .pixels = dst.pixels,
                 .format = IMAGE_FORMAT_B8G8R8A8};
+
+clear_bm = (bitmap){
+    .width  = dst.width,
+    .height = dst.height,
+    .stride = dst.width * 4,
+    .pixels = malloc((size_t)dst.width * dst.height * 4),
+    .format = IMAGE_FORMAT_B8G8R8A8
+};
+
+u32* pixels = (u32*)clear_bm.pixels;
+
+for (u32 i = 0; i < dst.width * dst.height; ++i) {
+    pixels[i] = 0xFF000000;
+}
   printf("image resized now drawing\n");
   // WM_CREATE  is slightly different than XCB_EXPOSE
   // WIN32 doesn't seem to call WM_PAINT at first
@@ -97,8 +115,8 @@ int main(void) {
   // rendering context if not created.
   u32 const center_x = (window_w > bm.width) ? (window_w - bm.width) / 2 : 0;
   u32 const center_y = (window_h > bm.height) ? (window_h - bm.height) / 2 : 0;
-  //platform_graphics_context_put_image(&gch, bm, center_x, center_y);
-  platform_window_present_frame(&wh, bm.pixels, bm.width, bm.height, bm.stride, center_x, center_y, true);
+  platform_graphics_context_put_image(&gch, bm, center_x, center_y);
+  //platform_window_present_frame(&wh, bm.pixels, bm.width, bm.height, bm.stride, center_x, center_y, true);
   while (is_running) {
     platform_pump_message();
   }

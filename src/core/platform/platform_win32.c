@@ -2,18 +2,21 @@
 
 #if defined(PLATFORM_WINDOWS)
 #include "../array/darray.h"
-#include <stdio.h>
 #include <stdlib.h>
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #define MY_WINDOW_CLASS L"window_WC"
 
-typedef struct platform_window_state {
-    HWND handle;
-} platform_window_state;
+typedef struct win32_handle_info {
+    HINSTANCE instance;
+}win32_handle_info;
+
+typedef struct vwindow_platform_state {
+    HWND hwnd;
+} vwindow_platform_state;
 
 typedef struct platform_state {
-    HINSTANCE app_instance;
+    win32_handle_info handle;
     vwindow **windows;
     platform_window_resize_callback window_resize_callback;
     platform_window_render_callback window_render_callback;
@@ -25,15 +28,16 @@ static platform_state *state_ptr;
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
 b8 platform_initalize() {
-
     state_ptr = malloc(sizeof(platform_state));
-    state_ptr->app_instance = (HINSTANCE)GetModuleHandleW(PNULL);
-    WNDCLASSEXW const wc = (WNDCLASSEXW const){
-        .cbSize = sizeof(WNDCLASSEXW),
-        .hInstance = state_ptr->app_instance,
-        .lpfnWndProc = WindowProc,
-        .lpszClassName = MY_WINDOW_CLASS,
-        .hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH)};
+    state_ptr->handle.instance = (HINSTANCE)GetModuleHandleW(PNULL);
+
+    HBRUSH black_brush = (HBRUSH)GetStockObject(BLACK_BRUSH);
+    WNDCLASSEXW wc = {};
+    wc.cbSize = sizeof(WNDCLASSEXW);
+    wc.hInstance = state_ptr->handle.instance;
+    wc.lpfnWndProc = WindowProc;
+    wc.lpszClassName = MY_WINDOW_CLASS;
+    wc.hbrBackground = black_brush;
 
     if (!RegisterClassExW(&wc)) {
         DWORD const last_error = GetLastError();
@@ -56,7 +60,7 @@ b8 platform_initalize() {
         }
         return false;
     }
-    state_ptr->windows = darray_create(vwindow, 2);
+    state_ptr->windows = darray_create(vwindow, 1);
     state_ptr->window_render_callback = PNULL;
     state_ptr->window_resize_callback = PNULL;
     state_ptr->window_close_callback = PNULL;
@@ -66,9 +70,9 @@ b8 platform_initalize() {
 b8 platform_window_create(vwindow *out_handle, char const *name,
                           u32 const w, u32 const h, u32 const x, u32 const y) {
 
-    platform_window_state *state = malloc(sizeof(platform_window_state));
+    vwindow_platform_state *platform_state = malloc(sizeof(vwindow_platform_state));
 
-    if (!state) {
+    if (!platform_state) {
         return false;
     }
 
@@ -86,18 +90,37 @@ b8 platform_window_create(vwindow *out_handle, char const *name,
 
     WCHAR wname[256];
     MultiByteToWideChar(CP_UTF8, 0, name, -1, wname, 256);
-    state->handle = CreateWindowExW(dwExStyle, MY_WINDOW_CLASS, wname, dwStyle,
+    platform_state->hwnd = CreateWindowExW(dwExStyle, MY_WINDOW_CLASS, wname, dwStyle,
                                     position_x, position_y, window_w, window_h,
-                                    PNULL, PNULL, state_ptr->app_instance, PNULL);
-    if (!state->handle) {
-        free(state);
+                                    PNULL, PNULL, state_ptr->handle.instance, PNULL);
+    if (!platform_state->hwnd) {
+        free(platform_state);
         return false;
     }
-    out_handle->internal_handle = state;
-    ShowWindow(state->handle, SW_SHOW);
-    UpdateWindow(state->handle);
+    out_handle->platform_state = platform_state;
+    ShowWindow(platform_state->hwnd, SW_SHOW);
     darray_push(state_ptr->windows, out_handle);
+    //UpdateWindow(platform_state->hwnd);
     return true;
+}
+
+void platform_window_destroy(vwindow* window) {
+	if (window) {
+		u32 len = darray_length(state_ptr->windows);
+		for (u32 i = 0; i < len; ++i) {
+			if (state_ptr->windows[i] == window) {
+				DestroyWindow(window->platform_state->hwnd);
+				window->platform_state->hwnd = 0;
+                //[0][NULL][2][3][4]...
+                //   ^--freed window
+                // In platform_window_create I call darray_push(state_ptr->windows, out_handle);
+				state_ptr->windows[i] = 0; // this could break because old indexes could not be resued, though is breaks from many creates and destroys.
+				return;
+			}
+		}
+		DestroyWindow(window->platform_state->hwnd);
+		window->platform_state->hwnd = 0;
+	}
 }
 
 typedef struct platform_graphics_context_state {
@@ -108,8 +131,8 @@ static platform_graphics_context_state *g_active_ctx = PNULL;
 
 b8 platform_graphics_context_create(graphics_context_handle *out_context,
                                     vwindow *window) {
-    platform_window_state *window_state =
-        (platform_window_state *)window->internal_handle;
+    vwindow_platform_state *window_state =
+        (vwindow_platform_state *)window->platform_state;
 
     platform_graphics_context_state *state =
         malloc(sizeof(platform_graphics_context_state));
@@ -122,11 +145,16 @@ b8 platform_graphics_context_create(graphics_context_handle *out_context,
     return true;
 }
 
+void platform_graphics_context_destroy(graphics_context_handle *out_context,
+                                    vwindow *window) {
+    free(out_context);
+}
+
 static vwindow *vwindow_from_HWND(HWND handle, u64 *out_index) {
     for (u64 i = 0; i < darray_length(state_ptr->windows); i++) {
-        platform_window_state *win_state =
-            (platform_window_state *)state_ptr->windows[i]->internal_handle;
-        if (win_state && win_state->handle == handle) {
+        vwindow_platform_state * platform_state =
+            (vwindow_platform_state *)state_ptr->windows[i]->platform_state;
+        if (platform_state && platform_state->hwnd == handle) {
             if (out_index) {
                 *out_index = i;
             }
@@ -141,17 +169,18 @@ void platform_graphics_context_put_image(graphics_context_handle *context,
     platform_graphics_context_state *graphics_state =
         (platform_graphics_context_state *)context->internal_handle;
 
-    HWND hwnd = graphics_state->window->internal_handle->handle;
-
+    HWND hwnd = graphics_state->window->platform_state->hwnd;
+    PAINTSTRUCT ps;
+    BeginPaint(hwnd, &ps);                                        
     HDC hdc;
     b8 release_dc = false;
 
-    if (graphics_state->window->render_state) {
-        hdc = (HDC)graphics_state->window->render_state;
-    } else {
+    // if (graphics_state->window->renderer_state) {
+    //     hdc = (HDC)graphics_state->window->renderer_state;
+    // } else {
         hdc = GetDC(hwnd);
         release_dc = true;
-    }
+    // }
 
     if (!hdc) {
         return;
@@ -165,12 +194,14 @@ void platform_graphics_context_put_image(graphics_context_handle *context,
     bmi.bmiHeader.biBitCount = 32;
     bmi.bmiHeader.biCompression = BI_RGB;
 
-    SetDIBitsToDevice(hdc, (int)x, (int)y, bm.width, bm.height, 0, 0, 0,
+    int result = SetDIBitsToDevice(hdc, (int)x, (int)y, bm.width, bm.height, 0, 0, 0,
                       bm.height, bm.pixels, &bmi, DIB_RGB_COLORS);
-
+    printf("%i", result);
     if (release_dc) {
         ReleaseDC(hwnd, hdc);
     }
+
+    EndPaint(hwnd, &ps);
 }
 
 b8 platform_pump_message() {
@@ -203,20 +234,20 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam,
     }
 
     case WM_PAINT: {
-        PAINTSTRUCT ps;
-        HDC hdc = BeginPaint(hwnd, &ps);
+        //PAINTSTRUCT ps;
+        //HDC hdc = BeginPaint(hwnd, &ps);
 
         RECT client_rect;
         GetClientRect(hwnd, &client_rect);
-
-        FillRect(hdc, &client_rect, (HBRUSH)GetStockObject(BLACK_BRUSH));
+        //FillRect(hdc, &client_rect, (HBRUSH)GetStockObject(BLACK_BRUSH));
         vwindow *handle = vwindow_from_HWND(hwnd, PNULL);
         if (handle && state_ptr->window_render_callback) {
-            handle->render_state = hdc;
+            //handle->renderer_state = (void*)hdc;
             state_ptr->window_render_callback(handle);
+            handle->renderer_state = PNULL;
         }
-
-        EndPaint(hwnd, &ps);
+        
+        //EndPaint(hwnd, &ps);
         return 0;
     }
     case WM_CLOSE: {
