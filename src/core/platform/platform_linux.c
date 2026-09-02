@@ -1,6 +1,6 @@
-#include "platform.h"
 
 #if defined(PLATFORM_LINUX)
+#include "platform.h"
 #include "../array/darray.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,13 +29,17 @@ static platform_state *state_ptr;
 
 typedef struct vwindow_platform_state {
   xcb_window_t window;
+  // this is wired for 2 reasons. I don't think win32 or apple encourange context sharing for windows
+  // but xcb dose, but at the same time allocating a context wit hte window mean more allocation and fewer ids since xcb limits id to 32 byte int
+  // my goal at first was to usethese 2 togeher to make use of the 4 byte padding
+  // also life times is different for win32 and xcb
+  // xcb_gcontext_t window_context;
   xcb_connection_t *connection;
-
-  xcb_gcontext_t window_context;
   u8 depth;
 } vwindow_platform_state;
 
 b8 platform_initalize() {
+  if (state_ptr) return false; // already initalized
   state_ptr = malloc(sizeof(platform_state));
   if (!state_ptr) {
     return false;
@@ -53,11 +57,45 @@ b8 platform_initalize() {
   state_ptr->handle.screen = iter.data;
 
   state_ptr->window_close_reply = XCB_NONE;
-  state_ptr->windows = darray_create(vwindow *, 1);
+  state_ptr->windows = darray_create(vwindow*, 1);
   state_ptr->window_render_callback = PNULL;
   state_ptr->window_resize_callback = PNULL;
   state_ptr->window_close_callback = PNULL;
   return true;
+}
+
+void platform_uninitalize(void)
+{
+    if (state_ptr) {
+        u32 len = darray_length(state_ptr->windows);
+
+        for (u32 i = 0; i < len; ++i) {
+            if (state_ptr->windows[i] != PNULL) {
+                xcb_destroy_window(
+                    state_ptr->handle.connection,
+                    state_ptr->windows[i]->platform_state->window
+                );
+
+                state_ptr->windows[i]->platform_state->window = 0;
+
+                free(state_ptr->windows[i]->platform_state);
+                state_ptr->windows[i]->platform_state = PNULL;
+
+            }
+        }
+        state_ptr->window_render_callback = PNULL;
+        state_ptr->window_resize_callback = PNULL;
+        state_ptr->window_close_callback = PNULL;
+        xcb_flush(state_ptr->handle.connection);
+
+        darray_destroy(state_ptr->windows);
+        state_ptr->windows = PNULL;
+        free(state_ptr->window_close_reply);
+
+        xcb_disconnect(state_ptr->handle.connection);
+        free(state_ptr);
+        state_ptr = PNULL;
+    }
 }
 
 b8 platform_window_create(vwindow *out_window, char const *name, u32 const w,
@@ -115,31 +153,38 @@ b8 platform_window_create(vwindow *out_window, char const *name, u32 const w,
     state_ptr->window_close_reply = reply2;
   }
   out_window->platform_state = state;
+  out_window->width = w;
+  out_window->height = h;
   darray_push(state_ptr->windows, out_window);
   return true;
 }
 
-void platform_window_destroy(vwindow *window) {
-  if (window) {
-    u32 len = darray_length(state_ptr->windows);
-    for (u32 i = 0; i < len; ++i) {
-      if (state_ptr->windows[i] == window) {
-        // string_free(window->name);
-        // string_free(window->title);
-        xcb_destroy_window(state_ptr->handle.connection,
-                           window->platform_state->window);
-        free(window->platform_state);
-        window->platform_state = PNULL;
-        state_ptr->windows[i] = PNULL;
+void platform_window_destroy(vwindow *window)
+{
+    if (!window || !state_ptr) {
         return;
-      }
     }
-    // KERROR("Destroying a window that was somehow not registered with the
-    // platform layer.");
-    xcb_destroy_window(state_ptr->handle.connection,
-                       window->platform_state->window);
-    window->platform_state->window = XCB_NONE;
-  }
+
+    u32 len = darray_length(state_ptr->windows);
+
+    for (u32 i = 0; i < len; ++i) {
+        if (state_ptr->windows[i] == window) {
+            xcb_destroy_window(
+                state_ptr->handle.connection,
+                window->platform_state->window
+            );
+
+            window->platform_state->window = XCB_NONE;
+
+            free(window->platform_state);
+            window->platform_state = PNULL;
+
+            state_ptr->windows[i] = PNULL;
+
+            xcb_flush(state_ptr->handle.connection);
+            return;
+        }
+    }
 }
 
 static vwindow *vwindow_from_xcb_window_t(xcb_window_t handle, u64 *out_index) {
@@ -154,17 +199,17 @@ static vwindow *vwindow_from_xcb_window_t(xcb_window_t handle, u64 *out_index) {
   return 0;
 }
 
-typedef struct platform_graphics_context_state {
+typedef struct vwindow_context_state {
   xcb_gcontext_t gc;
   vwindow *window;
-} platform_graphics_context_state;
+} vwindow_context_state;
 
-b8 platform_graphics_context_create(graphics_context_handle *out_context,
+b8 platform_graphics_context_create(vwindow_context *out_context,
                                     vwindow *window) {
   vwindow_platform_state* window_state = window->platform_state;
 
-  platform_graphics_context_state *conext_state =
-      malloc(sizeof(platform_graphics_context_state));
+  vwindow_context_state *conext_state =
+      malloc(sizeof(vwindow_context_state));
 
   if (!conext_state) {
     return false;
@@ -186,15 +231,15 @@ b8 platform_graphics_context_create(graphics_context_handle *out_context,
     return false;
   }
 
-  out_context->internal_handle = conext_state;
+  out_context->platform_state = conext_state;
 
   return true;
 }
 
-void platform_graphics_context_put_image(graphics_context_handle *context,
+void platform_graphics_context_put_image(vwindow_context *context,
                                          bitmap bm, u32 x, u32 y) {
-  platform_graphics_context_state *graphics_state =
-      (platform_graphics_context_state *)context->internal_handle;
+  vwindow_context_state *graphics_state =
+      (vwindow_context_state *)context->platform_state;
 
   vwindow_platform_state *window_state = graphics_state->window->platform_state;
 
@@ -249,22 +294,14 @@ b8 platform_pump_message() {
       xcb_client_message_event_t *event =
           (xcb_client_message_event_t *)generic_event;
       if (event->data.data32[0] == state_ptr->window_close_reply->atom) {
-        u64 index = 0;
-        vwindow *window = vwindow_from_xcb_window_t(event->window, &index);
-        b8 is_last = darray_length(state_ptr->windows);
+        vwindow *window = vwindow_from_xcb_window_t(event->window, PNULL);
         if (state_ptr->window_close_callback) {
-          state_ptr->window_close_callback(window, is_last);
-        }
-        xcb_destroy_window(state_ptr->handle.connection, event->window);
-        xcb_flush(state_ptr->handle.connection);
-        darray_pop_at(state_ptr->windows, index, PNULL);
-        if (is_last == true) {
-          return 0;
+          state_ptr->window_close_callback(window);
         }
       }
     } break;
-      free(generic_event);
-    }
+  }
+    free(generic_event);
   }
   return 1;
 }

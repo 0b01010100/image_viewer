@@ -5,7 +5,7 @@ ifneq ($(OS),Windows_NT)
 endif
 
 DEFINES = 
-CFLAGS = -g
+CFLAGS =
 LDFLAGS =
 ifeq ($(OS),Windows_NT)
     PLATFORM := win32
@@ -46,11 +46,18 @@ INCLUDE := -Isrc
 BIN := bin
 BUILD := build
 
-OBJ := $(patsubst src/%.c,$(BUILD)/%.c.o,$(SRC))
+# <c/m>.o to prevent possible overlap with files that have the same name but different extension
+OBJ := $(patsubst src/%.c,$(BUILD)/%.c.o,$(filter %.c,$(SRC)))
 OBJ += $(patsubst src/%.m,$(BUILD)/%.m.o,$(filter %.m,$(SRC)))
 
-
 TARGET := $(BIN)/prog$(EXT)
+
+
+release: $(TARGET)
+
+debug: CFLAGS += -g
+debug: $(TARGET)
+
 
 $(TARGET): $(OBJ)
 	@$(call MK,$(BIN))
@@ -64,6 +71,11 @@ $(BUILD)/%.m.o: src/%.m
 	@$(call MK,$(dir $@))
 	$(CC) -c $< -o $@ $(DEFINES) $(CFLAGS) $(INCLUDE)
 
+drun: $(TARGET)
+	lldb $(TARGET)
+
 clean:
 	@$(call RM,$(BIN))
 	@$(call RM,$(BUILD))
+
+.PHONY: clean

@@ -17,16 +17,3 @@ void image_resize_nearest(const Image *src, Image dst) {
         }
     }
 }
-
-void resize_nearest(const Image *src, Image *dst) {
-    for (size_t y = 0; y < dst->height; ++y) {
-        size_t src_y = y * src->height / dst->height;
-
-        for (size_t x = 0; x < dst->width; ++x) {
-            size_t src_x = x * src->width / dst->width;
-
-            dst->pixels[y * dst->width + x] =
-                src->pixels[src_y * src->width + src_x];
-        }
-    }
-}

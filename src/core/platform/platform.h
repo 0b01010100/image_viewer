@@ -13,26 +13,26 @@ typedef struct vwindow {
   u32 position_y;
 } vwindow;
 
-typedef struct platform_graphics_context_state platform_graphics_context_state;
+typedef struct vwindow_context_state vwindow_context_state;
 
-typedef struct graphics_context_handle {
-  platform_graphics_context_state *internal_handle;
-} graphics_context_handle;
+typedef struct vwindow_context {
+  vwindow_context_state* platform_state;
+} vwindow_context;
 
 typedef void (*platform_window_resize_callback)(vwindow *const window, int x,
                                                 int y);
 typedef void (*platform_window_render_callback)(vwindow *const window);
-typedef void (*platform_window_close_callback)(vwindow *const window,
-                                               b8 is_last_window);
+typedef void (*platform_window_close_callback)(vwindow *const window);
                                                
 b8 platform_initalize();
+void platform_uninitalize();
 
 b8 platform_window_create(vwindow *out_window, char const *name, u32 const w,
                           u32 const h, u32 const x, u32 const y);
 void platform_window_destroy(vwindow *winodw);
 b8 platform_pump_message();
 
-b8 platform_graphics_context_create(graphics_context_handle *out_context,
+b8 platform_graphics_context_create(vwindow_context *out_context,
                                     vwindow *window);
 
 typedef enum image_format {
@@ -48,16 +48,12 @@ typedef struct bitmap {
     void *pixels;
 } bitmap;
 
-void platform_graphics_context_put_image(graphics_context_handle *context,
+void platform_graphics_context_put_image(vwindow_context *context,
                                          bitmap bm, u32 x, u32 y);
 
-void platform_window_present_frame(vwindow *window, void *pixels, u32 width,
-                                   u32 height, u32 stride, u32 x, u32 y,
-                                   b8 has_alpha);
-
-typedef struct library_handle {
-  void *internal_handle;
-} library_handle;
+// void platform_window_present_frame(vwindow *window, void *pixels, u32 width,
+//                                    u32 height, u32 stride, u32 x, u32 y,
+//                                    b8 has_alpha);
 
 void platform_window_set_resize_callback(platform_window_resize_callback cb);
 void platform_window_set_render_callback(platform_window_render_callback cb);

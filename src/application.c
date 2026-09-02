@@ -1,12 +1,15 @@
+#include "core/defines.h"
 #include <stdio.h>
+#include <stdlib.h>
+
 #define STB_IMAGE_IMPLEMENTATION
+#include "application.h"
 #include "core/image/image_resize.h"
 #include "core/image/stbi_image.h"
 #include "core/platform/platform.h"
-
-bitmap bm; 
+bitmap bm;
 bitmap clear_bm;
-graphics_context_handle gch;
+vwindow_context gch;
 b8 is_running = true;
 void window_resize_hook(vwindow *const state, int width, int height) {
   state->width = width;
@@ -19,16 +22,14 @@ void window_render_hook(vwindow *const state) {
   u32 const center_y =
       (state->height > bm.height) ? (state->height - bm.height) / 2 : 0;
 
-  platform_graphics_context_put_image(&gch, clear_bm, center_x, center_y);
+  // platform_graphics_context_put_image(&gch, clear_bm, center_x, center_y);
 
   platform_graphics_context_put_image(&gch, bm, center_x, center_y);
-  //platform_window_present_frame(state, bm.pixels, bm.width, bm.height, bm.stride, center_x, center_y, true);
-
+  // platform_window_present_frame(state, bm.pixels, bm.width, bm.height,
+  // bm.stride, center_x, center_y, true);
 }
 
-void window_close_hook(vwindow *const state, b8 is_last_window) {
-  is_running = false;
-}
+void window_close_hook(vwindow *const state) { is_running = false; }
 
 static void swizzle_rgba_to_bgra(bitmap *bm) {
   u8 *pixels = (u8 *)bm->pixels;
@@ -42,7 +43,12 @@ static void swizzle_rgba_to_bgra(bitmap *bm) {
   }
 }
 
-int main(void) {
+int app_main(int argc, char **argv) {
+  char *filename = argv[1];
+  if (!filename) {
+    printf("Usage: prog <image_file>\n");
+    return 1;
+  }
   if (!platform_initalize()) {
     printf("Platform initialization failed\n");
     return 1;
@@ -53,9 +59,11 @@ int main(void) {
 
   bm = (bitmap){.stride = sizeof(int) * 4, .format = IMAGE_FORMAT_B8G8R8A8};
   int channels;
-  bm.pixels = stbi_load("E.jpg", (int*)&bm.width, (int*)&bm.height, &channels, 4);
+  bm.pixels =
+      stbi_load(filename, (int *)&bm.width, (int *)&bm.height, &channels, 4);
   if (!bm.pixels) {
-    printf("%s\n", stbi_failure_reason());
+    printf("stbi failed to load %s because %s\n", filename,
+           stbi_failure_reason());
     return 1;
   }
   swizzle_rgba_to_bgra(&bm);
@@ -92,34 +100,32 @@ int main(void) {
                 .pixels = dst.pixels,
                 .format = IMAGE_FORMAT_B8G8R8A8};
 
-clear_bm = (bitmap){
-    .width  = dst.width,
-    .height = dst.height,
-    .stride = dst.width * 4,
-    .pixels = malloc((size_t)dst.width * dst.height * 4),
-    .format = IMAGE_FORMAT_B8G8R8A8
-};
-
-u32* pixels = (u32*)clear_bm.pixels;
-
-for (u32 i = 0; i < dst.width * dst.height; ++i) {
-    pixels[i] = 0xFF000000;
-}
   printf("image resized now drawing\n");
   // WM_CREATE  is slightly different than XCB_EXPOSE
-  // WIN32 doesn't seem to call WM_PAINT at first
+  // WIN32 doesn't seem to call WM_PAINT at first unless UpdateWindow is called,
+  // but calling Update Window before the context is create crashes
   // so I am left with two options call WM_PAINT from WM_CREATE, but it may
   // not render the image becasue WM_CREATE happens inside CreateWindowEx just
-  // ingore the problem and manlly call what ever rendering funciton after
+  // ingore the problem and manlly call what every rendering funciton after
   // window creation. and change the XCB_EXPOSE to return out early if
   // rendering context if not created.
+
+  // Event-based rendering vs. per-frame rendering.
+  // I may eventually stick with per-frame rendering because event-based
+  // rendering is more platform-specific and can create inconsistencies in
+  // behavior.
   u32 const center_x = (window_w > bm.width) ? (window_w - bm.width) / 2 : 0;
   u32 const center_y = (window_h > bm.height) ? (window_h - bm.height) / 2 : 0;
   platform_graphics_context_put_image(&gch, bm, center_x, center_y);
-  //platform_window_present_frame(&wh, bm.pixels, bm.width, bm.height, bm.stride, center_x, center_y, true);
+  // platform_window_present_frame(&wh, bm.pixels, bm.width, bm.height,
+  // bm.stride, center_x, center_y, true);
   while (is_running) {
     platform_pump_message();
+    // platform_window_present_frame(&wh, bm.pixels, bm.width, bm.height,
+    // bm.stride, center_x, center_y, true);
   }
   stbi_image_free(bm.pixels);
-  return 0;
+  platform_window_destroy(&wh);
+  platform_uninitalize();
+  return EXIT_SUCCESS;
 }
