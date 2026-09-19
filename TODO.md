@@ -65,4 +65,4 @@ malloc
 platform_allocate
 virtual_reserve / virtual_commit
 ```
->>>>>>> fd9c433 (refactor window and rendering architecture. Also starting on refactoring allocation.)
+COme back to logger. I feel logging and any output system should not have to rely on allocations to work. Its one and only job should be logging selected things such as `Win32_DebugString`, `platform_console`, or `output.txt`.

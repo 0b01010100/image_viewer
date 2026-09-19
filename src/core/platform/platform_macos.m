@@ -465,4 +465,3 @@ u32 utf8_to_platform_string(char* utf8_str, platform_string plf_str, u32 plf_str
     return strlen(utf8_str);
 }
 #endif
->>>>>>> fd9c433 (refactor window and rendering architecture. Also starting on refactoring allocation.)
