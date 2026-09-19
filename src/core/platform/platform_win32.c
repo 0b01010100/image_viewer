@@ -1,323 +1,403 @@
+// CODE FOR MICROSOFT WINDOWS
+#include "platform.h"
 
 #if defined(PLATFORM_WINDOWS)
-#include "platform.h"
-#include "../array/darray.h"
-#include <stdlib.h>
 #define WIN32_LEAN_AND_MEAN
+#include <wchar.h>
 #include <windows.h>
-#define PL_WINDOW_CLASS L"window_WC"
+
+#pragma comment(lib,"kernel32")
+#pragma comment(lib,"user32")
+#pragma comment(lib,"gdi32")
+
+#include "../containers/vec.h"
+#include "../logger.h"
+
+typedef wchar_t* platform_string_internal;
+u32 utf8_to_wutf16(char* utf8_str, wchar_t* plf_str_len, u32 utf16_str_len);
+u32 wutf16_to_utf8(wchar_t* plf_str_len, char* utf8_str, u32 utf8_str_len);
+static vwindow *vwindow_from_HWND(HWND handle);
 
 typedef struct win32_handle_info {
     HINSTANCE instance;
-}win32_handle_info;
+} win32_handle_info; 
 
-typedef struct vwindow_platform_state {
-    HWND hwnd;
-} vwindow_platform_state;
+#define PL_WINDOW_CLASS L"PL_WINDOW_CLASS_WC"
 
-typedef struct platform_state {
+LRESULT CALLBACK WindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
+
+struct platform_state
+{
     win32_handle_info handle;
-    vwindow **windows;
+    vwindow** windows; // vec
     platform_window_resize_callback window_resize_callback;
-    platform_window_render_callback window_render_callback;
     platform_window_close_callback window_close_callback;
-} platform_state;
+};
 
-static platform_state *state_ptr;
+struct vwindow_platform_state
+{
+    HWND hwnd;
+};
 
-LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+static struct platform_state* state_ptr;
 
-b8 platform_initalize() {
-    if (state_ptr) return false; // already initalized
-
-    state_ptr = malloc(sizeof(platform_state));
-    if(!state_ptr) {
+b8 platform_initialize()
+{
+    state_ptr = ALLOC(sizeof(struct platform_state));
+    if(!state_ptr){
         return false;
     }
-    state_ptr->handle.instance = (HINSTANCE)GetModuleHandleW(PNULL);
+    state_ptr->handle.instance = GetModuleHandleW(PNULL);
     
+    // Basic Window Description
     HBRUSH black_brush = (HBRUSH)GetStockObject(BLACK_BRUSH);
     WNDCLASSEXW wc = {};
     wc.cbSize = sizeof(WNDCLASSEXW);
     wc.hInstance = state_ptr->handle.instance;
-    wc.lpfnWndProc = WindowProc;
+    wc.lpfnWndProc = WindowProcW;
     wc.lpszClassName = PL_WINDOW_CLASS;
     wc.hbrBackground = black_brush;
 
-    if (!RegisterClassExW(&wc)) {
+    // Register the Sctrion for later use
+    ATOM reg = RegisterClassExW(&wc);
+    if(!reg){
+
         DWORD const last_error = GetLastError();
         LPWSTR wmessage_buf = PNULL;
-        DWORD const size = FormatMessageW(
-            FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
-                FORMAT_MESSAGE_IGNORE_INSERTS,
-            PNULL, last_error, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-            (LPWSTR)&wmessage_buf, 0, PNULL);
-
+        u64 size = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+								  NULL, last_error, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPWSTR)&wmessage_buf, 0, NULL);
+        
         if (size) {
             MessageBoxW(PNULL, wmessage_buf, L"Window registration failed",
                         MB_ICONERROR | MB_OK);
             LocalFree(wmessage_buf);
         }
-        free(state_ptr);
+        VFATAL("Failed to register window class.");
+        DEALLOC(state_ptr);
         return false;
     }
 
-    state_ptr->windows = darray_create(vwindow*, 1);
-    state_ptr->window_render_callback = PNULL;
+    state_ptr->windows = vec_create(vwindow*, 1);
     state_ptr->window_resize_callback = PNULL;
     state_ptr->window_close_callback = PNULL;
     return true;
 }
 
-void platform_uninitalize(void)
+void platform_uninitalize()
 {
-    if (state_ptr) {
-        u32 len = darray_length(state_ptr->windows);
-        for (u32 i = 0; i < len; ++i) {
-            if (state_ptr->windows[i] != PNULL) {
-                DestroyWindow(state_ptr->windows[i]->platform_state->hwnd);
-                state_ptr->windows[i]->platform_state->hwnd = PNULL;
-                free(state_ptr->windows[i]->platform_state);
-                state_ptr->windows[i]->platform_state = PNULL;
-            }
-        }
-        UnregisterClassW(PL_WINDOW_CLASS, state_ptr->handle.instance);
-        darray_destroy(state_ptr->windows);
-        state_ptr->windows = PNULL;
-        state_ptr->window_render_callback = PNULL;
-        state_ptr->window_resize_callback = PNULL;
-        state_ptr->window_close_callback = PNULL;
-        free(state_ptr);
-        state_ptr = PNULL;
+    if(!state_ptr){
+        VFATAL("Double free corruption");
+        return;
     }
+
+    DEALLOC(state_ptr);
+    UnregisterClassW(PL_WINDOW_CLASS, state_ptr->handle.instance);
 }
 
-b8 platform_window_create(vwindow *out_handle, char const *name,
-                          u32 const w, u32 const h, u32 const x, u32 const y) {
 
-    vwindow_platform_state *platform_state = malloc(sizeof(vwindow_platform_state));
-    if (!platform_state) {
+b8 platform_window_create(platform_string title, u32 width, u32 height, u32 x, u32 y, vwindow* window)
+{
+    platform_string_internal ititle = title;
+    if(!state_ptr){
         return false;
     }
 
-    DWORD const dwExStyle = WS_EX_APPWINDOW | WS_EX_OVERLAPPEDWINDOW;
+    (void)window->width;
+    (void)window->height;
+
+    vwindow_platform_state* window_state = ALLOC(sizeof(vwindow_platform_state));
+    if(!window_state) {
+        return false;
+    }
     DWORD const dwStyle = WS_OVERLAPPEDWINDOW;
+    DWORD const dwStyleEx = WS_EX_APPWINDOW | WS_EX_OVERLAPPEDWINDOW;
 
-    RECT wr = {0, 0, (LONG)w, (LONG)h};
-    AdjustWindowRectEx(&wr, dwStyle, FALSE, dwExStyle);
+    RECT wr = {};
+    AdjustWindowRectEx(&wr, dwStyle, FALSE, dwStyleEx);
 
-    u32 const window_w = (wr.right - wr.left);
-    u32 const window_h = (wr.bottom - wr.top);
+    u32 const window_width = (wr.right - wr.left) + width;
+    u32 const window_height = (wr.bottom - wr.top) + height;
 
-    u32 const position_y = y + wr.top;
-    u32 const position_x = x + wr.left;
-
-    WCHAR wname[256];
-    MultiByteToWideChar(CP_UTF8, 0, name, -1, wname, 256);
-    platform_state->hwnd = CreateWindowExW(dwExStyle, PL_WINDOW_CLASS, wname, dwStyle,
-                                    position_x, position_y, window_w, window_h,
-                                    PNULL, PNULL, state_ptr->handle.instance, PNULL);
-    if (!platform_state->hwnd) {
-        free(platform_state);
-        return false;
-    }
-    out_handle->platform_state = platform_state;
-    out_handle->width = w;
-    out_handle->height = h;
+    i32 const window_x  = x + wr.left;
+    i32 const window_y  = y; // + wr.top moves the window to far up for me
     
-    ShowWindow(platform_state->hwnd, SW_SHOW);
-    darray_push(state_ptr->windows, out_handle);
-    //UpdateWindow(platform_state->hwnd); may call BeginPaint, which may break
+    //wchar_t wname[256];
+    //utf8_to_wutf16(name, wname, _countof(wname));
+    window_state->hwnd = CreateWindowExW(dwStyleEx, 
+        PL_WINDOW_CLASS, ititle, 
+        dwStyle, 
+        window_x, window_y, 
+        window_width, window_height, 
+        PNULL, PNULL, 
+        state_ptr->handle.instance, 
+        PNULL
+    );
+
+    ShowWindow(window_state->hwnd, SW_SHOW);
+    window->width = width;
+    window->height = height;
+    window->platform_state = window_state;
+    window->renderer_state = NULL;
+
+    vec_push(state_ptr->windows, &window);
     return true;
 }
 
-void platform_window_destroy(vwindow* window) {
-	if (window) {
-		u32 const len = darray_length(state_ptr->windows);
-		for (u32 i = 0; i < len; ++i) {
-			if (state_ptr->windows[i] == window && window->platform_state->hwnd != PNULL) {
-				DestroyWindow(window->platform_state->hwnd);
-				window->platform_state->hwnd = 0;
-                //[0][NULL][2][3][4]...
-                //   ^--freed window
-                // In platform_window_create I call darray_push(state_ptr->windows, out_handle);
-				state_ptr->windows[i] = 0; // this could break because old indexes could not be resued, though it breaks from many creates and destroys.
-				return;
-			}
-		}
-	}
-}
-
-typedef struct vwindow_context_state {
-    vwindow *window;
-} vwindow_context_state;
-
-static vwindow_context_state *g_active_ctx = PNULL;
-
-b8 platform_graphics_context_create(vwindow_context *out_context,
-                                    vwindow *window) {
-    if (!state_ptr || !window) {
-        return false;
+void platform_window_destroy(vwindow *window) {
+  if (window) {
+    u32 len = vec_length(state_ptr->windows);
+    for (u32 i = 0; i < len; ++i) {
+      if (state_ptr->windows[i] == window) {
+        DestroyWindow(window->platform_state->hwnd);
+        //[0][NULL][2][3][4]...
+        //   ^--freed window
+        // In platform_window_create I call darray_push(state_ptr->windows, out_handle);
+        // this could break because old indexes could not be resued, though it breaks from many creates and destroys.
+        free(window->platform_state); // once fixed I may remove this, for reuse.
+        window->platform_state = PNULL;
+        state_ptr->windows[i] = PNULL;
+        return;
+      }
     }
-    vwindow_platform_state *window_state =
-        (vwindow_platform_state *)window->platform_state;
-
-    vwindow_context_state *state = malloc(sizeof(vwindow_context_state));
-    state->window = window;
-    out_context->platform_state = state;
-    return true;
+    VERROR("Destroying a window that was somehow not registered with the platform layer.\n");
+    DestroyWindow(window->platform_state->hwnd);
+    window->platform_state->hwnd = NULL;
+  }
 }
 
-void platform_graphics_context_destroy(vwindow_context *out_context,
-                                    vwindow *window) {
-    free(out_context);
+
+void platform_window_present_frame(vwindow* window, u8* pixel_map, u32 width, u32 height, u32 x, u32 y)
+{
+    HDC hdc = GetDC(window->platform_state->hwnd);
+
+    // https://gist.github.com/taxilian/1068352
+    BITMAPINFO  bmi = {};
+    bmi.bmiHeader.biSize = sizeof(BITMAPINFO);
+    bmi.bmiHeader.biBitCount = 32;
+    bmi.bmiHeader.biCompression = BI_RGB;
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biSizeImage = width*height*4;
+    bmi.bmiHeader.biWidth = width;
+    bmi.bmiHeader.biHeight = -height;
+    
+    // I don't want to stretch the image
+    // StretchDIBits(hdc, 
+    //     x, window->height,
+    //     window->width, window->height,
+    //     0, 0, 
+    //     width, height,
+    //     pixel_map, 
+    //     &bmi, 
+    //     DIB_RGB_COLORS, 
+    //     SRCCOPY
+    // );
+
+// Unlike XCB, my window remains the same color as the HBRUSH when the image size is too big.
+// When I scale the image window and it becomes smaller than the image, the screen goes completely black.
+// When scaling in and out, the image flickers between showing the image and rendering black.
+// But it works. WILL COME BACK TO THIS ON THE NEXT COMMIT.
+
+    int written = SetDIBitsToDevice(hdc, 
+        x, y, 
+        width, height, 
+        0, 0, 
+        0, 
+        height, 
+        pixel_map, 
+        &bmi, 
+        DIB_RGB_COLORS
+    );
+    (void)written;
+
+    // without this the program was lagging so bad
+    ReleaseDC(window->platform_state->hwnd, hdc);
 }
 
-static vwindow *vwindow_from_HWND(HWND handle, u64 *out_index) {
-    for (u64 i = 0; i < darray_length(state_ptr->windows); i++) {
-        vwindow_platform_state * platform_state =
-            (vwindow_platform_state *)state_ptr->windows[i]->platform_state;
-        if (platform_state && platform_state->hwnd == handle) {
-            if (out_index) {
-                *out_index = i;
-            }
+void platform_pump_messages()
+{
+    MSG Msg;
+    while(PeekMessageW(&Msg, PNULL, 0, 0, PM_REMOVE)){
+        TranslateMessage(&Msg);
+        DispatchMessageW(&Msg);
+    }
+}
+
+// void platform_wait_to_pump_messages()
+// {
+//     MSG Msg;
+//     while(GetMessageW(&Msg, PNULL, 0, 0) < 0){
+//         TranslateMessage(&Msg);
+//         DispatchMessageW(&Msg);
+//     }
+// }
+
+void platform_set_window_resize_callback(
+    platform_window_resize_callback callback) {
+  state_ptr->window_resize_callback = callback;
+}
+
+void platform_set_window_close_callback(
+    platform_window_close_callback callback) {
+  state_ptr->window_close_callback = callback;
+}
+
+u32 platform_string_to_utf8(platform_string plf_str_len, char* utf8_str, u32 utf8_str_len)
+{
+    return wutf16_to_utf8(plf_str_len, utf8_str, utf8_str_len);
+}
+
+u32 utf8_to_platform_string(char* utf8_str, platform_string plf_str_len, u32 utf16_str_len)
+{
+    return utf8_to_wutf16(utf8_str, plf_str_len, utf16_str_len);
+}
+
+u32 utf8_to_wutf16(char* utf8_str, wchar_t* plf_str_len, u32 utf16_str_len){
+    return MultiByteToWideChar(
+        CP_UTF8, 
+        0, 
+        utf8_str, 
+        -1, 
+        plf_str_len, 
+        utf16_str_len
+    );
+}
+
+u32 wutf16_to_utf8(wchar_t* plf_str_len, char* utf8_str, u32 utf8_str_len){
+    return WideCharToMultiByte(
+        CP_UTF8, 
+        0, 
+        plf_str_len, 
+        -1, 
+        utf8_str, 
+        utf8_str_len,
+        0,
+        PNULL
+    );
+}
+
+static vwindow *vwindow_from_HWND(HWND handle) {
+    if(!state_ptr ||!state_ptr->windows) return 0;
+    for (u64 i = 0; i < vec_length(state_ptr->windows); i++) {
+        if (!state_ptr->windows[i]) {
+            continue;
+        }
+        vwindow_platform_state * platform_state = (vwindow_platform_state *)state_ptr->windows[i]->platform_state;
+         if (platform_state && platform_state->hwnd == handle){
             return state_ptr->windows[i];
         }
     }
     return 0;
 }
 
-void platform_graphics_context_put_image(vwindow_context *context,
-                                         bitmap bm, u32 x, u32 y) {
-    vwindow_context_state *graphics_state =
-        (vwindow_context_state *)context->platform_state;
-
-    HWND hwnd = graphics_state->window->platform_state->hwnd;
-    PAINTSTRUCT ps;
-    BeginPaint(hwnd, &ps);                                        
-    HDC hdc;
-    b8 release_dc = false;
-    
-    // kind of just a work around becasue HDC has a short life time and for some reason 
-    // I can't render proprly when calling GetDC in the render callback.
-    // so its a mix of GetDC and Begin Paint which is weird.
-    if (graphics_state->window->renderer_state) {
-         hdc = (HDC)graphics_state->window->renderer_state;
-    } else {
-        hdc = GetDC(hwnd);
-        release_dc = true;
-    }
-
-    if (!hdc) {
-        return;
-    }
-
-    BITMAPINFO bmi = {0};
-    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bmi.bmiHeader.biWidth = (LONG)bm.width;
-    bmi.bmiHeader.biHeight = -(LONG)bm.height;
-    bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = 32;
-    bmi.bmiHeader.biCompression = BI_RGB;
-
-    SetDIBitsToDevice(hdc, (int)x, (int)y, bm.width, bm.height, 0, 0, 0,
-                      bm.height, bm.pixels, &bmi, DIB_RGB_COLORS);
-    if (release_dc) {
-        ReleaseDC(hwnd, hdc);
-    }
-
-    EndPaint(hwnd, &ps);
-}
-
-b8 platform_pump_message() {
-    MSG Msg;
-
-    while (PeekMessageW(&Msg, PNULL, 0, 0, PM_REMOVE)) {
-        TranslateMessage(&Msg);
-        DispatchMessageW(&Msg);
-    }
-
-    return 1;
-}
-
-LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam,
-                            LPARAM lParam) {
-    switch (uMsg) {
-        case WM_SIZE: {
-            vwindow *handle = vwindow_from_HWND(hwnd, PNULL);
-            if (handle) {
-                handle->width = LOWORD(lParam);
-                handle->height = HIWORD(lParam);
-            
-                if (state_ptr->window_resize_callback) {
-                    state_ptr->window_resize_callback(handle, handle->width,
-                                                      handle->height);
-                }
-            }
-            InvalidateRect(hwnd, PNULL, FALSE);
-        } return 0;
-    
-        // may remove this completly
-        case WM_PAINT: {
-            PAINTSTRUCT ps;
-            HDC hdc = BeginPaint(hwnd, &ps);
-        
-            RECT client_rect;
-            GetClientRect(hwnd, &client_rect);
-            FillRect(hdc, &client_rect, (HBRUSH)GetStockObject(BLACK_BRUSH));
-            vwindow *handle = vwindow_from_HWND(hwnd, PNULL);
-            if (handle && state_ptr->window_render_callback) {
-                handle->renderer_state = (void*)hdc;
-                state_ptr->window_render_callback(handle);
-                handle->renderer_state = PNULL;
-            }
-            
-            EndPaint(hwnd, &ps);
-        } return 0;
+LRESULT CALLBACK  WindowProcW(
+  HWND   hWnd,
+  UINT   Msg,
+  WPARAM wParam,
+  LPARAM lParam
+){
+    switch(Msg){
+        case WM_ERASEBKGND: {
+            HDC hdc = (HDC)wParam;
+            RECT rect;
+            GetClientRect(hWnd, &rect);
+            FillRect(hdc, &rect, (HBRUSH)GetStockObject(BLACK_BRUSH));
+        }return 1;
 
         case WM_CLOSE: {
-            u64 index = 0;
-            vwindow *handle = vwindow_from_HWND(hwnd, &index);
-            if (handle) {
-                if (state_ptr->window_close_callback) {
-                    state_ptr->window_close_callback(handle);
+            vwindow* window = vwindow_from_HWND(hWnd);
+            if(window && state_ptr->window_close_callback) {
+                state_ptr->window_close_callback(window);
+            }
+        }return 0;
+        // case WM_PAINT: {
+        //     vwindow* window = vwindow_from_HWND(hWnd);
+        //     if(window && state_ptr->window_close_callback) {
+        //         PAINTSTRUCT ps;
+        //         HDC hdc = BeginPaint(window->platform_state->hwnd, &ps);
+
+        //         FillRect(hdc, &ps.rcPaint, (HBRUSH)(COLOR_WINDOW + 1));
+
+        //         EndPaint(window->platform_state->hwnd, &ps);
+        //     }
+        // }return 0;
+        case WM_SIZE: {
+            vwindow* window = vwindow_from_HWND(hWnd);
+            if(window && state_ptr->window_resize_callback) {
+                if (window->width != LOWORD(lParam) || window->height  != HIWORD(lParam)){
+                    window->width = LOWORD(lParam);
+                    window->height = HIWORD(lParam);
+                    state_ptr->window_resize_callback(window);
                 }
             }
-        } break;
+            //InvalidateRect(hWnd, NULL, TRUE);
+        }return 0;
     }
-    return DefWindowProcW(hwnd, uMsg, wParam, lParam);
+    return DefWindowProcW(hWnd, Msg, wParam, lParam);
 }
 
-void platform_window_set_resize_callback(
-    platform_window_resize_callback callback) {
-    state_ptr->window_resize_callback = callback;
+void platform_write_console(CONSOLE_SINK sink, platform_string message){
+    platform_string_internal imessage = message;
+    DWORD StdHandle = (sink == CONSOLE_SINK_OUT)? STD_OUTPUT_HANDLE : STD_ERROR_HANDLE;
+    HANDLE ConsoleOutput = GetStdHandle(StdHandle);
+    WriteConsoleW(ConsoleOutput, imessage, wcslen(imessage), NULL, NULL);
 }
 
-void platform_window_set_render_callback(
-    platform_window_render_callback callback) {
-    state_ptr->window_render_callback = callback;
-}
-
-void platform_window_set_close_callback(
-    platform_window_close_callback callback) {
-    state_ptr->window_close_callback = callback;
-}
-// converts Windows Wide UTF16 to UTF8
-u64 win32_wutf16_to_utf8(
-    const wchar_t* wutf16_str,
-    char* utf8_str,
-    u64 utf8_str_size
-)
+b8 platform_virtual_reserve(vvirtual_memory* virtual, u64 to_reserve)
 {
-    return (u64)WideCharToMultiByte(
-        CP_UTF8,
-        0,
-        wutf16_str,
-        -1,
-        utf8_str,
-        (int)utf8_str_size,
-        NULL,
-        NULL
-    );
+    virtual->base = VirtualAlloc(NULL, to_reserve, MEM_RESERVE, PAGE_NOACCESS);
+    if(virtual->base){
+        virtual->reserved = to_reserve;
+        virtual->committed = 0;
+        return true;
+    }
+    return false;
+}
+
+void* platform_virtual_commit(vvirtual_memory* virtual, u64 to_commit)
+{
+    void* commit_target = (u8*)virtual->base + virtual->committed;
+    
+    void* requested = VirtualAlloc(commit_target, to_commit, MEM_COMMIT, PAGE_READWRITE);
+    if(requested){
+        virtual->committed += to_commit;
+    }
+
+    return requested;
+}
+
+void platform_virtual_decommit(vvirtual_memory* virtual, u64 to_decommit)
+{
+    void* decommit_target = (u8*)virtual->base + virtual->committed - to_decommit;
+    VirtualFree(decommit_target, to_decommit, MEM_DECOMMIT);
+    virtual->committed -= to_decommit;
+}
+
+void platform_virtual_unreserve(vvirtual_memory* virtual)
+{
+    VirtualFree(virtual->base, 0, MEM_RELEASE);
+    
+    virtual->base = NULL;
+    virtual->reserved = 0;
+    virtual->committed = 0;
+}
+
+void* platform_heap_allocate(u64 to_alloc){
+    return HeapAlloc(GetProcessHeap(), 0, to_alloc);
+}
+
+void platform_heap_deallocate(void* memory){
+    HeapFree(GetProcessHeap(), 0, memory);
+}
+
+void* platform_zero_memory(void* memory, u64 memory_size){
+    return memset(memory, 0, memory_size); // ZeroMemory
+}
+
+void* platform_set_memory(void* memory, i32 value, u64 memory_size){
+    return memset(memory, value, memory_size);
+}
+
+void* platform_copy_memory(void* dest, void* src, u64 memory_size){
+    return memcpy(dest, src, memory_size);
 }
 #endif

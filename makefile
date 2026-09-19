@@ -5,7 +5,7 @@ ifneq ($(OS),Windows_NT)
 endif
 
 DEFINES = 
-CFLAGS =
+CFLAGS = #-fsanitize=address
 LDFLAGS =
 ifeq ($(OS),Windows_NT)
     PLATFORM := win32
@@ -14,12 +14,12 @@ ifeq ($(OS),Windows_NT)
     HAS_SH := $(shell where sh.exe 2>nul)
     ifeq ($(HAS_SH),)
         $(info Using CMD commands.)
-        SRC := $(shell where.exe /r src *.c)
-		LDFLAGS += -luser32 -lgdi32 -lkernel32 -Wl,/DEBUG
+        rwildcard=$(wildcard $1$2) $(foreach d,$(wildcard $1*),$(call rwildcard,$d/,$2))
+        SRC := $(call rwildcard,src,*.c) # $(shell where.exe /r src *.c)
+        LDFLAGS += -luser32 -lgdi32 -lkernel32
         MK = if not exist "$(subst /,\,$1)" mkdir "$(subst /,\,$1)"
         RM = if exist "$(subst /,\,$1)" rd /s /q "$(subst /,\,$1)"
     else
-        $(info MSYS/CYGWIN? Using Unix commands.)
         SRC := $(shell find src -type f -name "*c")
         MK = mkdir -p $1
         RM = rm -rf $1
@@ -72,7 +72,7 @@ $(BUILD)/%.m.o: src/%.m
 	$(CC) -c $< -o $@ $(DEFINES) $(CFLAGS) $(INCLUDE)
 
 drun: $(TARGET)
-	lldb $(TARGET)
+	lldb $(TARGET) ../examples/Cairo.jpg
 
 clean:
 	@$(call RM,$(BIN))

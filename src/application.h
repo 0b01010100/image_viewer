@@ -1,3 +1,3 @@
-#pragma once
 #include "core/defines.h"
-int app_main(int argc, char** argv);
+#include "core/platform/platform.h"
+int app_main(int agrc, platform_string argv[]);
