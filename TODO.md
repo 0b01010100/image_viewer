@@ -32,6 +32,8 @@ Lets the graphics API/windowing system manage the presentation framebuffer inter
 
 ## XCB image presentation
 
+Currently Both MacOS and Window have the same exact problem. The problem is when the image is bigger than the window the color changes to the color of the clear color of the window, BLACK_BRUSH and BlackColor.
+
 `xcb_put_image` vs. `xcb_shm_put_image`
 
 `darray` has holes in it when I destroy the window.
