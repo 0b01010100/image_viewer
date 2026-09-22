@@ -25,6 +25,8 @@ typedef struct platform_state {
     platform_window_close_callback window_close_callback;
 } platform_state;
 
+static vwindow *vwindow_from_NSWindow(NSWindow *window,
+                                                  u64 *out_index);
 typedef char* platform_string_internal;
 typedef struct vwindow_platform_state {
   NSWindow *window;
@@ -40,17 +42,19 @@ typedef struct vwindow_platform_state {
 
 static platform_state *state_ptr;
 
-@interface CanvasView : NSView
-@property(nonatomic, assign) vwindow *window;
+@interface CanvasView : NSView{
+  vwindow* handle;
+}
 @end
 
 @implementation CanvasView
 
-- (instancetype)initWithFrame:(NSRect)frameRect {
-  self = [super initWithFrame:frameRect];
-  if (self) {
-    self.wantsLayer = YES;
-    self.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+- (instancetype)initWithWindow:(vwindow*)wnd{
+  self = [super initWithFrame:NSMakeRect(0, 0, wnd->width, wnd->height)];
+    if (self) {
+      handle = wnd;
+      self.wantsLayer = YES;
+      self.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
 
     // move origin to top left
     self.layer.contentsGravity = kCAGravityTopLeft;
@@ -69,33 +73,34 @@ static platform_state *state_ptr;
 - (void)drawRect:(NSRect)dirtyRect {
   [super drawRect:dirtyRect];
   @autoreleasepool {
-    CGContextRef ctx = [[NSGraphicsContext currentContext] CGContext];
-    [[NSColor blackColor] setFill];
-    NSRectFill(dirtyRect);
-    if (!ctx)
-      return;
-  
-    size_t bytes_per_row = (size_t)self.window->platform_state->pixel_width * sizeof(u32);
-    size_t data_size = bytes_per_row * self.window->platform_state->pixel_height;
-  
-    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-    CGDataProviderRef provider =
-        CGDataProviderCreateWithData(PNULL, self.window->platform_state->pixel_map, data_size, PNULL);
-  
-    CGImageRef cgImage = CGImageCreate(
-        self.window->platform_state->pixel_width, self.window->platform_state->pixel_height, 
-        8, 32, bytes_per_row,
-        colorSpace,
-        kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst, 
-        provider,
-        PNULL, false, kCGRenderingIntentDefault);
-  
-    CGRect rect = CGRectMake((CGFloat)self.window->platform_state->pixel_x, (CGFloat)self.window->platform_state->pixel_y, (CGFloat)self.window->platform_state->pixel_width, (CGFloat)self.window->platform_state->pixel_height);
-    CGContextDrawImage(ctx, rect, cgImage);
-  
-    CGImageRelease(cgImage);
-    CGDataProviderRelease(provider);
-    CGColorSpaceRelease(colorSpace);
+    if(handle){
+      CGContextRef ctx = [[NSGraphicsContext currentContext] CGContext];
+      [[NSColor blackColor] setFill];
+      NSRectFill(dirtyRect);
+      if (!ctx)
+        return;
+      size_t bytes_per_row = (size_t)handle->platform_state->pixel_width * sizeof(u32);
+      size_t data_size = bytes_per_row * handle->platform_state->pixel_height;
+
+      CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+      CGDataProviderRef provider =
+          CGDataProviderCreateWithData(PNULL, handle->platform_state->pixel_map, data_size, PNULL);
+
+      CGImageRef cgImage = CGImageCreate(
+          handle->platform_state->pixel_width, handle->platform_state->pixel_height, 
+          8, 32, bytes_per_row,
+          colorSpace,
+          kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst, 
+          provider,
+          PNULL, false, kCGRenderingIntentDefault);
+
+      CGRect rect = CGRectMake((CGFloat)handle->platform_state->pixel_x, (CGFloat)handle->platform_state->pixel_y, (CGFloat)handle->platform_state->pixel_width, (CGFloat)handle->platform_state->pixel_height);
+      CGContextDrawImage(ctx, rect, cgImage);
+
+      CGImageRelease(cgImage);
+      CGDataProviderRelease(provider);
+      CGColorSpaceRelease(colorSpace);
+    }
   }
 }
 
@@ -129,15 +134,15 @@ static platform_state *state_ptr;
 
 b8 platform_initialize() {
   if (state_ptr) return false; // already initalized
-  state_ptr = malloc(sizeof(platform_state));
+  state_ptr = ALLOC(sizeof(platform_state));
   if (!state_ptr) {
     return false;
   }
   @autoreleasepool {
-    NSApplication *application = [NSApplication sharedApplication];
-    [application setActivationPolicy:NSApplicationActivationPolicyRegular];
-    [application activateIgnoringOtherApps:YES];
-
+    [NSApplication sharedApplication];
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+    [NSApp activateIgnoringOtherApps:YES];
+    [NSApp setPresentationOptions:NSApplicationPresentationDefault];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
     
     state_ptr->windows = vec_create(vwindow *, 1);
@@ -176,56 +181,59 @@ void platform_uninitalize(void)
 }
 
 b8 platform_window_create(platform_string title, u32 width, u32 height, u32 x, u32 y, vwindow* window) {
-
   if (!state_ptr) {
     return false;
   }
 
-  vwindow_platform_state *state = malloc(sizeof(vwindow_platform_state));
+  vwindow_platform_state *state = ALLOC(sizeof(vwindow_platform_state));
   if (!state) {
     return false;
   }
   @autoreleasepool {
   state->window = [[NSWindow alloc]
       initWithContentRect:NSMakeRect(x, y, width, height)
-                styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
-                          NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable
-                  backing:NSBackingStoreBuffered
-                    defer:NO];
+      styleMask: NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+                 NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable
+      backing:NSBackingStoreBuffered
+      defer:NO];
   if (!state->window) {
     free(state);
     return false;
   }
+    // get the size of the client area
+  NSRect contentBounds = [state->window.contentView bounds];
 
+  state->view = [[CanvasView alloc] initWithWindow:window];
+  if(!state->view) {
+    return false;
+  }
+  [[state->window contentView] addSubview:state->view];
+
+  NSString * ns_title;
   if (!title) {
     //[state->window setTitle:[NSString stringWithUTF8String:"macos window"]];
-    [state->window setTitle:@("macos window")];
+    ns_title = @"macos window";
+  } else {
+    ns_title = @((platform_string_internal)title);
   }
+  [state->window setTitle:ns_title];
 
   state->delegate = [[WindowDelegate alloc] init];
   if (!state->delegate) {
     free(state);
     return false;
   }
-
+  
   state->delegate.window = window;
   [state->window setDelegate:state->delegate];
 
   [state->window makeKeyAndOrderFront:nil];
-  window->platform_state = state;
   
-  // get the size of the client area
-  NSRect contentBounds = [state->window.contentView bounds];
 
-  state->view = [[CanvasView alloc] initWithFrame:contentBounds];
-  if(!state->view) {
-    return false;
-  }
-  state->window.contentView = state->view;
-  state->view.window = window;
 
   window->width = (u32)contentBounds.size.width;
   window->height = (u32)contentBounds.size.height;
+  window->platform_state = state;
   vec_push(state_ptr->windows, window);
   }
   return true;
@@ -309,15 +317,14 @@ void platform_window_present_frame(
 
 void platform_pump_messages() {
   @autoreleasepool {
-    NSApplication *app = [NSApplication sharedApplication];
     NSEvent *event = PNULL;
     do {
-      event = [app nextEventMatchingMask:NSEventMaskAny
+      event = [NSApp nextEventMatchingMask:NSEventMaskAny
                                untilDate:nil
                                   inMode:NSDefaultRunLoopMode
                                  dequeue:TRUE];
 
-      [app sendEvent:event];
+      [NSApp sendEvent:event];
     } while (event != PNULL);
   }
 }
@@ -432,7 +439,6 @@ void* platform_set_memory(void* memory, i32 value, u64 memory_size){
 void* platform_copy_memory(void* dest, void* src, u64 memory_size){
     return memcpy(dest, src, memory_size);
 }
-
 
 void platform_set_window_resize_callback(
     platform_window_resize_callback callback) {
