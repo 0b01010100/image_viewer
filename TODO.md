@@ -67,4 +67,42 @@ malloc
 platform_allocate
 virtual_reserve / virtual_commit
 ```
-COme back to logger. I feel logging and any output system should not have to rely on allocations to work. Its one and only job should be logging selected things such as `Win32_DebugString`, `platform_console`, or `output.txt`.
+Come back to logger. I feel logging and any output system should not have to rely on allocations to work. Its one and only job should be logging selected things such as `Win32_DebugString`, `platform_console`, or `output.txt`.
+
+
+As of now there are 3 big allocations happing and I think I can get ride of one:
+    - Big allocation for framebuffer: memory allocation = dynaiclly scales when the window extensed to a new size.
+    - Orginal Image: memory allocation type = static
+    - The main Image: memory allocation type = static for image itself stays the same.
+
+    This plan is to not not have a main Image buffer and sample the original image onto the present buffer directly instead of sample to main image and them copy to spefcail cordante of the framebuffer. gotta learn MORE math i don't know to make this work.
+
+It is too much work to handle a generic `platform_string`. I think it would be better to define something specifically for each win32 platform to handle its UTF wide-character strings. 
+
+For example:
+
+```c
+// Use the stack for strings
+#define WIN32_USE_STACK_FOR_STRINGS
+#define WIN32_MAX_STRING_CONVERT_STACK 1024
+
+#if !defined(WIN32_MAX_STRING_CONVERT_STACK)
+
+#endif
+
+// Use scratch allocator for strings
+#define WIN32_USE_SCRATCH_FOR_STRINGS
+```
+
+These can be passed as compile-time constants:
+
+```text
+-DWIN32_USE_STACK_FOR_STRINGS -DWIN32_MAX_STRING_CONVERT_STACK=1024
+```
+
+This way, the code does not have to be manually changed if the stack frame for some functions needs to be larger or smaller.
+
+For example, instead of having a generic `platform_string`, the Windows platform layer can handle the UTF-8 to UTF-16 conversion internally using either the stack or a scratch allocator.
+
+For macOS, I need to look more into `NSString`. What I think is happening is that macOS is not necessarily using UTF-8 everywhere, but rather the APIs it uses, such as Cocoa/Foundation, work with UTF-16-style Unicode strings.
+
