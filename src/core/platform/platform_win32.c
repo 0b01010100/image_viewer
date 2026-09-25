@@ -3,9 +3,11 @@
 
 #if defined(PLATFORM_WINDOWS)
 #define WIN32_LEAN_AND_MEAN
-#include <wchar.h>
-#include <windows.h>
 
+#include <windows.h>
+#include <wchar.h>
+
+// not necessary but added anyway
 #pragma comment(lib,"kernel32")
 #pragma comment(lib,"user32")
 #pragma comment(lib,"gdi32")
@@ -13,18 +15,18 @@
 #include "../containers/vec.h"
 #include "../logger.h"
 
-typedef wchar_t* platform_string_internal;
+#define PL_WINDOW_CLASS L"PL_WINDOW_CLASS_WC"
 u32 utf8_to_wutf16(char* utf8_str, wchar_t* plf_str_len, u32 utf16_str_len);
 u32 wutf16_to_utf8(wchar_t* plf_str_len, char* utf8_str, u32 utf8_str_len);
+typedef wchar_t* platform_string_internal;
+static struct platform_state* state_ptr;
 static vwindow *vwindow_from_HWND(HWND handle);
+LRESULT CALLBACK WindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
 
 typedef struct win32_handle_info {
     HINSTANCE instance;
 } win32_handle_info; 
 
-#define PL_WINDOW_CLASS L"PL_WINDOW_CLASS_WC"
-
-LRESULT CALLBACK WindowProcW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
 
 struct platform_state
 {
@@ -39,7 +41,6 @@ struct vwindow_platform_state
     HWND hwnd;
 };
 
-static struct platform_state* state_ptr;
 
 b8 platform_initialize()
 {
@@ -89,11 +90,24 @@ void platform_uninitalize()
         VFATAL("Double free corruption");
         return;
     }
-
+    u32 len = vec_length(state_ptr->windows);
+    for (u32 i = 0; i < len; ++i) {
+        if (state_ptr->windows[i] != PNULL) {
+            DestroyWindow(state_ptr->windows[i]->platform_state->hwnd);
+            state_ptr->windows[i]->platform_state->hwnd = PNULL;
+            free(state_ptr->windows[i]->platform_state);
+            state_ptr->windows[i]->platform_state = PNULL;
+        }
+    }
+    vec_destroy(state_ptr->windows);
+    state_ptr->windows = PNULL;
+    state_ptr->window_resize_callback = PNULL;
+    state_ptr->window_close_callback = PNULL;
+    
     DEALLOC(state_ptr);
     UnregisterClassW(PL_WINDOW_CLASS, state_ptr->handle.instance);
+    state_ptr = PNULL;
 }
-
 
 b8 platform_window_create(platform_string title, u32 width, u32 height, u32 x, u32 y, vwindow* window)
 {
@@ -165,8 +179,7 @@ void platform_window_destroy(vwindow *window) {
   }
 }
 
-
-void platform_window_present_frame(vwindow* window, u8* pixel_map, u32 width, u32 height, u32 x, u32 y)
+void platform_window_present_frame(vwindow* window, u8* pixel_map)
 {
     HDC hdc = GetDC(window->platform_state->hwnd);
 
@@ -176,33 +189,17 @@ void platform_window_present_frame(vwindow* window, u8* pixel_map, u32 width, u3
     bmi.bmiHeader.biBitCount = 32;
     bmi.bmiHeader.biCompression = BI_RGB;
     bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biSizeImage = width*height*4;
-    bmi.bmiHeader.biWidth = width;
-    bmi.bmiHeader.biHeight = -height;
-    
-    // I don't want to stretch the image
-    // StretchDIBits(hdc, 
-    //     x, window->height,
-    //     window->width, window->height,
-    //     0, 0, 
-    //     width, height,
-    //     pixel_map, 
-    //     &bmi, 
-    //     DIB_RGB_COLORS, 
-    //     SRCCOPY
-    // );
+    bmi.bmiHeader.biSizeImage = window->width * window->height * sizeof(u32);
+    bmi.bmiHeader.biWidth = window->width;
+    bmi.bmiHeader.biHeight = -window->height;
 
-// Unlike XCB, my window remains the same color as the HBRUSH when the image size is too big.
-// When I scale the image window and it becomes smaller than the image, the screen goes completely black.
-// When scaling in and out, the image flickers between showing the image and rendering black.
-// But it works. WILL COME BACK TO THIS ON THE NEXT COMMIT.
-
+    // should I use SetDIBitsToDevice or BitBlt
     int written = SetDIBitsToDevice(hdc, 
-        x, y, 
-        width, height, 
+        0, 0, 
+        window->width, window->height, 
         0, 0, 
         0, 
-        height, 
+        window->height, 
         pixel_map, 
         &bmi, 
         DIB_RGB_COLORS
@@ -239,6 +236,72 @@ void platform_set_window_resize_callback(
 void platform_set_window_close_callback(
     platform_window_close_callback callback) {
   state_ptr->window_close_callback = callback;
+}
+
+void platform_write_console(CONSOLE_SINK sink, platform_string message){
+    platform_string_internal imessage = message;
+    DWORD StdHandle = (sink == CONSOLE_SINK_OUT)? STD_OUTPUT_HANDLE : STD_ERROR_HANDLE;
+    HANDLE ConsoleOutput = GetStdHandle(StdHandle);
+    WriteConsoleW(ConsoleOutput, imessage, wcslen(imessage), NULL, NULL);
+}
+
+b8 platform_virtual_reserve(vvirtual_memory* virtual, u64 to_reserve)
+{
+    virtual->base = VirtualAlloc(NULL, to_reserve, MEM_RESERVE, PAGE_NOACCESS);
+    if(virtual->base){
+        virtual->reserved = to_reserve;
+        virtual->committed = 0;
+        return true;
+    }
+    return false;
+}
+
+void* platform_virtual_commit(vvirtual_memory* virtual, u64 to_commit)
+{
+    void* commit_target = (u8*)virtual->base + virtual->committed;
+    
+    void* requested = VirtualAlloc(commit_target, to_commit, MEM_COMMIT, PAGE_READWRITE);
+    if(requested){
+        virtual->committed += to_commit;
+    }
+
+    return requested;
+}
+
+void platform_virtual_decommit(vvirtual_memory* virtual, u64 to_decommit)
+{
+    void* decommit_target = (u8*)virtual->base + virtual->committed - to_decommit;
+    VirtualFree(decommit_target, to_decommit, MEM_DECOMMIT);
+    virtual->committed -= to_decommit;
+}
+
+void platform_virtual_unreserve(vvirtual_memory* virtual)
+{
+    VirtualFree(virtual->base, 0, MEM_RELEASE);
+    
+    virtual->base = NULL;
+    virtual->reserved = 0;
+    virtual->committed = 0;
+}
+
+void* platform_heap_allocate(u64 to_alloc){
+    return HeapAlloc(GetProcessHeap(), 0, to_alloc);
+}
+
+void platform_heap_deallocate(void* memory){
+    HeapFree(GetProcessHeap(), 0, memory);
+}
+
+void* platform_zero_memory(void* memory, u64 memory_size){
+    return memset(memory, 0, memory_size); // ZeroMemory
+}
+
+void* platform_set_memory(void* memory, i32 value, u64 memory_size){
+    return memset(memory, value, memory_size);
+}
+
+void* platform_copy_memory(void* dest, const void* src, u64 memory_size){
+    return memcpy(dest, src, memory_size);
 }
 
 u32 platform_string_to_utf8(platform_string plf_str_len, char* utf8_str, u32 utf8_str_len)
@@ -309,17 +372,6 @@ LRESULT CALLBACK  WindowProcW(
                 state_ptr->window_close_callback(window);
             }
         }return 0;
-        // case WM_PAINT: {
-        //     vwindow* window = vwindow_from_HWND(hWnd);
-        //     if(window && state_ptr->window_close_callback) {
-        //         PAINTSTRUCT ps;
-        //         HDC hdc = BeginPaint(window->platform_state->hwnd, &ps);
-
-        //         FillRect(hdc, &ps.rcPaint, (HBRUSH)(COLOR_WINDOW + 1));
-
-        //         EndPaint(window->platform_state->hwnd, &ps);
-        //     }
-        // }return 0;
         case WM_SIZE: {
             vwindow* window = vwindow_from_HWND(hWnd);
             if(window && state_ptr->window_resize_callback) {
@@ -335,69 +387,4 @@ LRESULT CALLBACK  WindowProcW(
     return DefWindowProcW(hWnd, Msg, wParam, lParam);
 }
 
-void platform_write_console(CONSOLE_SINK sink, platform_string message){
-    platform_string_internal imessage = message;
-    DWORD StdHandle = (sink == CONSOLE_SINK_OUT)? STD_OUTPUT_HANDLE : STD_ERROR_HANDLE;
-    HANDLE ConsoleOutput = GetStdHandle(StdHandle);
-    WriteConsoleW(ConsoleOutput, imessage, wcslen(imessage), NULL, NULL);
-}
-
-b8 platform_virtual_reserve(vvirtual_memory* virtual, u64 to_reserve)
-{
-    virtual->base = VirtualAlloc(NULL, to_reserve, MEM_RESERVE, PAGE_NOACCESS);
-    if(virtual->base){
-        virtual->reserved = to_reserve;
-        virtual->committed = 0;
-        return true;
-    }
-    return false;
-}
-
-void* platform_virtual_commit(vvirtual_memory* virtual, u64 to_commit)
-{
-    void* commit_target = (u8*)virtual->base + virtual->committed;
-    
-    void* requested = VirtualAlloc(commit_target, to_commit, MEM_COMMIT, PAGE_READWRITE);
-    if(requested){
-        virtual->committed += to_commit;
-    }
-
-    return requested;
-}
-
-void platform_virtual_decommit(vvirtual_memory* virtual, u64 to_decommit)
-{
-    void* decommit_target = (u8*)virtual->base + virtual->committed - to_decommit;
-    VirtualFree(decommit_target, to_decommit, MEM_DECOMMIT);
-    virtual->committed -= to_decommit;
-}
-
-void platform_virtual_unreserve(vvirtual_memory* virtual)
-{
-    VirtualFree(virtual->base, 0, MEM_RELEASE);
-    
-    virtual->base = NULL;
-    virtual->reserved = 0;
-    virtual->committed = 0;
-}
-
-void* platform_heap_allocate(u64 to_alloc){
-    return HeapAlloc(GetProcessHeap(), 0, to_alloc);
-}
-
-void platform_heap_deallocate(void* memory){
-    HeapFree(GetProcessHeap(), 0, memory);
-}
-
-void* platform_zero_memory(void* memory, u64 memory_size){
-    return memset(memory, 0, memory_size); // ZeroMemory
-}
-
-void* platform_set_memory(void* memory, i32 value, u64 memory_size){
-    return memset(memory, value, memory_size);
-}
-
-void* platform_copy_memory(void* dest, void* src, u64 memory_size){
-    return memcpy(dest, src, memory_size);
-}
 #endif

@@ -46,8 +46,8 @@ void platform_window_destroy(vwindow* window);
 // BGRA
 // stride = sizeof(u8)*4
 // API native renderering.
-// pretty much the only function needed for CPU rendering
-void platform_window_present_frame(vwindow* window, u8* pixel_map, u32 width, u32 height, u32 x, u32 y);
+// pretty much the only function needed for CPU rendering assuming the present buffer is the same size as the window, client area
+void platform_window_present_frame(vwindow* window, u8* pixel_map);
 
 void platform_pump_messages();
 
@@ -58,7 +58,6 @@ void platform_set_window_resize_callback(platform_window_resize_callback callbac
 void platform_set_window_close_callback(platform_window_close_callback callback);
 
 void platform_write_console(CONSOLE_SINK sink, platform_string message);
-
 
 void* platform_heap_allocate(u64 to_alloc);
 void platform_heap_deallocate(void* memory);
@@ -76,4 +75,4 @@ void platform_virtual_unreserve(vvirtual_memory* virtual);
 
 void* platform_zero_memory(void* memory, u64 memory_size);
 void* platform_set_memory(void* memory, i32 value, u64 memory_size);
-void* platform_copy_memory(void* dest, void* src, u64 memory_size);
+void* platform_copy_memory(void* dest, const void* src, u64 memory_size);

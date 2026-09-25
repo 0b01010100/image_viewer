@@ -2,45 +2,71 @@
 #include "platform.h"
 
 #if defined(PLATFORM_MACOS)
-#include "../containers/vec.h"
+#include <Foundation/Foundation.h>
+#include <AppKit/AppKit.h>
+
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
-#include <Foundation/Foundation.h>
-#import <CoreGraphics/CoreGraphics.h>
-#import <AppKit/AppKit.h>
+#include <sys/mman.h>
+#include <sys/uio.h>
+#include <unistd.h>
 
-@class WindowDelegate;
+#include "../containers/vec.h"
+#include "../logger.h"
+
+@class ApplicationDelegate;
 @class CanvasView;
+@class WindowDelegate;
 
-typedef struct macos_handle_info{
-    void* unused;
-}macos_handle_info;
+static platform_state* state_ptr;
+typedef char* platform_string_internal;
+static vwindow *vwindow_from_NSWindow(NSWindow* Window, u64 *out_index);
 
-typedef struct platform_state {
-    macos_handle_info* handle;
-    vwindow **windows;
+typedef struct macos_handle_info {
+  void* unused;
+} macos_handle_info;
+
+struct platform_state {
+    macos_handle_info handle;
+    ApplicationDelegate* app_delegate;
+    vwindow** windows; // vec
     platform_window_resize_callback window_resize_callback;
     platform_window_close_callback window_close_callback;
-} platform_state;
+};
 
 static vwindow *vwindow_from_NSWindow(NSWindow *window,
                                                   u64 *out_index);
-typedef char* platform_string_internal;
-typedef struct vwindow_platform_state {
-  NSWindow *window;
-  void* pixel_map;
-  u32 pixel_width;
-  u32 pixel_height;
-  u32 pixel_x;
-  u32 pixel_y;
+struct vwindow_platform_state {
+    NSWindow* Window;
+    WindowDelegate* WindowDelegate;
+    CanvasView*   View;
+};
 
-  CanvasView *view;
-  WindowDelegate *delegate;
-} vwindow_platform_state;
+@interface ApplicationDelegate : NSObject <NSApplicationDelegate> {
+}
+@end // ApplicationDelegate
 
-static platform_state *state_ptr;
+@implementation ApplicationDelegate
+- (void)applicationDidFinishLaunching:(NSNotification*)notification {
+// Posting an empty event at start
+@autoreleasepool {
+    NSEvent* event = [NSEvent otherEventWithType:NSEventTypeApplicationDefined
+        location:NSMakePoint(0, 0)
+        modifierFlags:0
+        timestamp:0
+        windowNumber:0
+        context:nil
+        subtype:0
+        data1:0
+        data2:0
+    ];
+    [NSApp postEvent:event atStart:YES];
+} // autoreleasepool
+
+[NSApp stop:nil];
+}
+@end // ApplicationDelegate
 
 @interface CanvasView : NSView{
   vwindow* handle;
@@ -54,12 +80,19 @@ static platform_state *state_ptr;
     if (self) {
       handle = wnd;
       self.wantsLayer = YES;
-      self.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+      //self.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
 
     // move origin to top left
     self.layer.contentsGravity = kCAGravityTopLeft;
+
+    // Make sure the layer actually has a drawable size.
+    self.layer.contentsGravity = kCAGravityResize;
   }
   return self;
+}
+
+-(BOOL)canBecomeKeyView {
+  return YES;
 }
 
 - (BOOL)acceptsFirstResponder {
@@ -69,63 +102,38 @@ static platform_state *state_ptr;
 - (BOOL)isOpaque {
   return YES;
 }
-
-- (void)drawRect:(NSRect)dirtyRect {
-  [super drawRect:dirtyRect];
-  @autoreleasepool {
-    if(handle){
-      CGContextRef ctx = [[NSGraphicsContext currentContext] CGContext];
-      [[NSColor blackColor] setFill];
-      NSRectFill(dirtyRect);
-      if (!ctx)
-        return;
-      size_t bytes_per_row = (size_t)handle->platform_state->pixel_width * sizeof(u32);
-      size_t data_size = bytes_per_row * handle->platform_state->pixel_height;
-
-      CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-      CGDataProviderRef provider =
-          CGDataProviderCreateWithData(PNULL, handle->platform_state->pixel_map, data_size, PNULL);
-
-      CGImageRef cgImage = CGImageCreate(
-          handle->platform_state->pixel_width, handle->platform_state->pixel_height, 
-          8, 32, bytes_per_row,
-          colorSpace,
-          kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst, 
-          provider,
-          PNULL, false, kCGRenderingIntentDefault);
-
-      CGRect rect = CGRectMake((CGFloat)handle->platform_state->pixel_x, (CGFloat)handle->platform_state->pixel_y, (CGFloat)handle->platform_state->pixel_width, (CGFloat)handle->platform_state->pixel_height);
-      CGContextDrawImage(ctx, rect, cgImage);
-
-      CGImageRelease(cgImage);
-      CGDataProviderRelease(provider);
-      CGColorSpaceRelease(colorSpace);
-    }
-  }
-}
-
-@end
+@end // CanvasView
 
 @interface WindowDelegate : NSObject <NSWindowDelegate>
-@property(nonatomic, assign) vwindow *window;
-@end
+{
+    vwindow *window;
+}
+- (instancetype)initWithState:(vwindow*)window_state;
+@end // WindowDelegate
 
 @implementation WindowDelegate
-- (void)windowDidResize:(NSNotification *)notification {
-  NSWindow *window = notification.object;
-  NSRect frame = [window contentView].frame;
+- (instancetype)initWithState:(vwindow *)init_state {
+    self = [super init];
 
-  self.window->width = (u32)frame.size.width;
-  self.window->height = (u32)frame.size.height;
+    if(self != nil){
+        window = init_state;
+    }
+    return self;
+}
+- (void)windowDidResize:(NSNotification *)notification {
+  NSRect frame = [window->platform_state->Window contentView].frame;
+
+  window->width = (u32)frame.size.width;
+  window->height = (u32)frame.size.height;
 
   if (state_ptr && state_ptr->window_resize_callback) {
-    state_ptr->window_resize_callback(self.window);
+    state_ptr->window_resize_callback(window);
   }
 }
 
 - (BOOL)windowShouldClose:(NSWindow *)sender {
   if (state_ptr && state_ptr->window_close_callback) {
-    state_ptr->window_close_callback(self.window);
+    state_ptr->window_close_callback(window);
   }
 
   return YES;
@@ -143,137 +151,154 @@ b8 platform_initialize() {
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
     [NSApp activateIgnoringOtherApps:YES];
     [NSApp setPresentationOptions:NSApplicationPresentationDefault];
-    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
-    
+
     state_ptr->windows = vec_create(vwindow *, 1);
     state_ptr->window_resize_callback = PNULL;
     state_ptr->window_close_callback = PNULL;
-  }
-  return true;
-}
+       
+    @autoreleasepool
+    {
+        [NSApplication sharedApplication];
+        state_ptr->app_delegate = [[ApplicationDelegate alloc] init];
+        if(!state_ptr->app_delegate){
+            VERROR("Failed to create application");
+        }
+        [NSApp setDelegate: state_ptr->app_delegate];
 
-void platform_uninitalize(void)
-{
-    if (state_ptr) {
-        u32 len = vec_length(state_ptr->windows);
-        for (u32 i = 0; i < len; ++i) {
-            if (state_ptr->windows[i] != PNULL) {
-                // gota free the window some how
-                //DestroyWindow(state_ptr->windows[i]->platform_state->window);
-                state_ptr->windows[i]->platform_state->window = PNULL;
-                free(state_ptr->windows[i]->platform_state);
-                state_ptr->windows[i]->platform_state = PNULL;
-                state_ptr->windows[i] = NULL;
-                //[0][NULL][2][3][4]...
-                //   ^--freed window
-                // In platform_window_create I call darray_push(state_ptr->windows, out_window);
-                // this could break because old indexes could not be resued, though it breaks from many creates and destroys.
-            }
+        if(![[NSRunningApplication currentApplication] isFinishedLaunching]){
+            [NSApp run];
         }
 
+        [NSApp activateIgnoringOtherApps:YES];
+    }
+    return true;
+}
+}
+
+void platform_uninitalize()
+{
+    if(!state_ptr){
+        VFATAL("Double free corruption");
+        return;
+    }
+    @autoreleasepool {
+        u32 len = vec_length(state_ptr->windows);
+        for (u32 i = 0; i < len; ++i) {
+          if (state_ptr->windows[i] != PNULL && state_ptr->windows[i]->platform_state) {
+            // destroy window
+            if(state_ptr->windows[i]->platform_state->Window){
+                [state_ptr->windows[i]->platform_state->Window setDelegate:nil];
+                [state_ptr->windows[i]->platform_state->Window close];
+            }
+           
+            state_ptr->windows[i]->platform_state->WindowDelegate = nil;
+           
+            state_ptr->windows[i]->platform_state->Window.contentView = nil;
+            state_ptr->windows[i]->platform_state->Window = nil;
+           
+            state_ptr->windows[i]->platform_state->View = nil;
+           
+            DEALLOC(state_ptr->windows[i]->platform_state);
+            state_ptr->windows[i]->platform_state = PNULL;
+            state_ptr->windows[i] = PNULL;
+            return;
+          }
+        }
+   
         vec_destroy(state_ptr->windows);
-        state_ptr->windows = PNULL;
-        state_ptr->window_resize_callback = PNULL;
-        state_ptr->window_close_callback = PNULL;
-        free(state_ptr);
-        state_ptr = PNULL;
+        DEALLOC(state_ptr);
     }
 }
 
-b8 platform_window_create(platform_string title, u32 width, u32 height, u32 x, u32 y, vwindow* window) {
-  if (!state_ptr) {
-    return false;
-  }
+b8 platform_window_create(platform_string title, u32 width, u32 height, u32 x, u32 y, vwindow* window)
+{
+    @autoreleasepool{
+        platform_string_internal ititle = title;
+        (void)window->width;
+        (void)window->height;
 
-  vwindow_platform_state *state = ALLOC(sizeof(vwindow_platform_state));
-  if (!state) {
-    return false;
-  }
-  @autoreleasepool {
-  state->window = [[NSWindow alloc]
-      initWithContentRect:NSMakeRect(x, y, width, height)
-      styleMask: NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
-                 NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable
-      backing:NSBackingStoreBuffered
-      defer:NO];
-  if (!state->window) {
-    free(state);
-    return false;
-  }
-    // get the size of the client area
-  NSRect contentBounds = [state->window.contentView bounds];
+        vwindow_platform_state* window_state = ALLOC(sizeof(vwindow_platform_state));
+        if(!window_state){
+            return  false;
+        }
 
-  state->view = [[CanvasView alloc] initWithWindow:window];
-  if(!state->view) {
-    return false;
-  }
-  [[state->window contentView] addSubview:state->view];
+        if(!ititle){
+            ititle = "appkit_window";
+        }
+    
+        window_state->Window = [[NSWindow alloc] initWithContentRect:NSMakeRect(x, y, width, height)
+            styleMask: NSWindowStyleMaskTitled |
+                        NSWindowStyleMaskClosable |
+                        NSWindowStyleMaskMiniaturizable |
+                        NSWindowStyleMaskResizable
+            backing:NSBackingStoreBuffered
+            defer: NO
+        ];
 
-  NSString * ns_title;
-  if (!title) {
-    //[state->window setTitle:[NSString stringWithUTF8String:"macos window"]];
-    ns_title = @"macos window";
-  } else {
-    ns_title = @((platform_string_internal)title);
-  }
-  [state->window setTitle:ns_title];
+        if (window_state->Window == nil){
+            DEALLOC(window_state);
+            return false;
+        }
+        window_state->View = [[CanvasView alloc] initWithWindow:window];
+        if(!window_state->View){
+            window_state->Window = nil;
+            DEALLOC(window_state);
+            return false;
+        }
+        window_state->WindowDelegate = [[WindowDelegate alloc] initWithState:window];
+        if(!window_state){
+            window_state->View = nil;
+            window_state->Window = nil;
+            DEALLOC(window_state);
+            return false;
+        }
+        [window_state->Window setLevel:NSNormalWindowLevel];
+        [window_state->Window setContentView: window_state->View];
+        [window_state->Window setBackgroundColor:NSColor.blackColor];
+        [window_state->Window setTitle: @(ititle)];
+        [window_state->Window setIsVisible:YES];
+        [window_state->Window makeKeyAndOrderFront:nil];
+        [window_state->Window setDelegate:window_state->WindowDelegate];
+        window->platform_state = window_state;
 
-  state->delegate = [[WindowDelegate alloc] init];
-  if (!state->delegate) {
-    free(state);
-    return false;
-  }
-  
-  state->delegate.window = window;
-  [state->window setDelegate:state->delegate];
-
-  [state->window makeKeyAndOrderFront:nil];
-  
-
-
-  window->width = (u32)contentBounds.size.width;
-  window->height = (u32)contentBounds.size.height;
-  window->platform_state = state;
-  vec_push(state_ptr->windows, window);
-  }
-  return true;
+        window->width = (u32)width;
+        window->height = (u32)height;
+        vec_push(state_ptr->windows, window);
+    }
+    return true;
 }
 
 void platform_window_destroy(vwindow *window) {
-  if (!window || !window->platform_state)
-    return;
-    
-  @autoreleasepool {
-    u32 const len = vec_length(state_ptr->windows);
-    for (u32 i = 0; i < len; ++i) {
-      if (state_ptr->windows[i] == window) {
-        vwindow_platform_state *plat_state = window->platform_state;
-        
-        // Clean up Objective-C objects before freeing state
-        if (plat_state->window) {
-          [plat_state->window setDelegate:nil];
-          [plat_state->window close]; // Release window from screen
-          plat_state->window = nil;
+    @autoreleasepool {
+        if (!window || !window->platform_state) return;
+
+        if (window->platform_state->Window) {
+            [window->platform_state->Window setDelegate:nil];
+            [window->platform_state->Window close];
         }
-        plat_state->delegate = nil;
-        plat_state->view = nil;
-        
-        free(plat_state);
-        window->platform_state = PNULL;
-        state_ptr->windows[i] = PNULL; // this could break because old indexes could not be resued, though it breaks from many creates and destroys.
-        //[0][NULL][2][3][4]...
-        //   ^----freed window
-        // In platform_window_create I call vec_push(state_ptr->windows, out_window);
-        return;
-      }
+ 
+        window->platform_state->WindowDelegate = nil;
+       
+        window->platform_state->Window.contentView = nil;
+        window->platform_state->Window = nil;
+       
+        window->platform_state->Window = nil;
+        window->platform_state->View = nil;
+       
+        DEALLOC(window->platform_state);//[0][NULL][2][3][4]...
+                //   ^--freed window
+                // In platform_window_create I call darray_push(state_ptr->windows, out_window);
+                // this could break because old indexes could not be resued, though it breaks from many creates and destroys.
+        window->platform_state = NULL;
     }
-  }
 }
 
-static vwindow *vwindow_from_NSWindow(NSWindow *window,
-                                                  u64 *out_index) {
+static vwindow *vwindow_from_NSWindow(NSWindow* Window, u64 *out_index) {
   for (u64 i = 0; i < vec_length(state_ptr->windows); i++) {
-    if (state_ptr->windows[i]->platform_state->window == window) {
+    if (!state_ptr->windows[i]) {
+            continue;
+    }
+    if (state_ptr->windows[i]->platform_state->Window == Window) {
       if (out_index) {
         *out_index = i;
       }
@@ -283,50 +308,69 @@ static vwindow *vwindow_from_NSWindow(NSWindow *window,
   return 0;
 }
 
-
-// FIX THIS. I can't seem to get this to work exactly the way I want it to.
-// This is fine for now. I might just set the layer.contents, which would give me
-// more high-level control over what is rendered. The con is that I would
-// have to manage my own framebuffer and ensure it is always the same size
-// as the view, which should be about the same size as the window,
-// directly avoiding the callback.
-
-// also just like windowsL // Unlike XCB, my window remains the same color as the [[NSColor blackColor] setFill]; when the image size is too big.
-// When I scale the image window and it becomes smaller than the image, the screen goes completely black.
-// When scaling in and out, the image flickers between showing the image and rendering black.
-// But it works. WILL COME BACK TO THIS ON THE NEXT COMMIT.
-
-void platform_window_present_frame(
-    vwindow *window,
-    u8 *pixel_map,
-    u32 width,
-    u32 height,
-    u32 x,
-    u32 y)
+void platform_window_present_frame(vwindow* window, u8* pixel_map)
 {
-    vwindow_platform_state *state = window->platform_state;
+    if (!window || !window->platform_state || !pixel_map)
+        return;
 
-    state->pixel_map = pixel_map;
-    state->pixel_width = width;
-    state->pixel_height = height;
-    state->pixel_x = x;
-    state->pixel_y = y;
+    vwindow_platform_state *window_state = window->platform_state;
 
-    [state->view setNeedsDisplay:YES];
+    size_t width = (size_t)window->width;
+    size_t height = (size_t)window->height;
+    size_t bytes_per_row = width * sizeof(u32);
+    size_t data_size = bytes_per_row * height;
+
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+
+    CGDataProviderRef provider =
+        CGDataProviderCreateWithData(
+            NULL,
+            pixel_map,
+            data_size,
+            NULL
+        );
+
+    CGImageRef image = CGImageCreate(
+        width,
+        height,
+        8,
+        32,
+        bytes_per_row,
+        colorSpace,
+        kCGBitmapByteOrder32Little |
+        kCGImageAlphaPremultipliedFirst,
+        provider,
+        NULL,
+        false,
+        kCGRenderingIntentDefault
+    );
+
+    window_state->View.layer.contents = (__bridge id)image;
+
+    CGImageRelease(image);
+    CGDataProviderRelease(provider);
+    CGColorSpaceRelease(colorSpace);
 }
 
-void platform_pump_messages() {
-  @autoreleasepool {
-    NSEvent *event = PNULL;
-    do {
-      event = [NSApp nextEventMatchingMask:NSEventMaskAny
-                               untilDate:nil
-                                  inMode:NSDefaultRunLoopMode
-                                 dequeue:TRUE];
+void platform_pump_messages()
+{
+    if(state_ptr){
+        @autoreleasepool {
+            NSEvent* event;
 
-      [NSApp sendEvent:event];
-    } while (event != PNULL);
-  }
+            for(;;){
+                event = [NSApp
+                    nextEventMatchingMask:NSEventMaskAny
+                    untilDate:[NSDate distantPast]
+                    inMode:NSDefaultRunLoopMode
+                    dequeue:YES];
+                if(!event){
+                    break;
+                }
+                [NSApp sendEvent:event];
+            }
+        }
+    }
 }
 
 void platform_write_console(CONSOLE_SINK sink, platform_string message){
@@ -334,6 +378,7 @@ void platform_write_console(CONSOLE_SINK sink, platform_string message){
     FILE* stream = (sink == CONSOLE_SINK_OUT)? stdout : stderr;
     fprintf(stream, "%s", imessage);
 }
+
 // Cache the page size to eliminate sysconf overhead
 u64 platform_page_size(void) {
     static u64 page_size = 0;
@@ -375,8 +420,8 @@ void* platform_virtual_commit(vvirtual_memory* virtual, u64 to_commit)
     // Bounds check using the ALIGNED commit size
     if (virtual->committed + aligned_commit > virtual->reserved) return PNULL;
 
-    uint8_t* commit_addr = (uint8_t*)virtual->base + virtual->committed;
-    
+    u8* commit_addr = (u8*)virtual->base + virtual->committed;
+   
     if (mprotect(commit_addr, aligned_commit, PROT_READ | PROT_WRITE) != 0) {
         return PNULL;
     }
@@ -396,7 +441,7 @@ void platform_virtual_decommit(vvirtual_memory* virtual, u64 amount)
     }
 
     u64 new_committed = virtual->committed - aligned_amount;
-    uint8_t* decommit_addr = (uint8_t*)virtual->base + new_committed;
+    u8* decommit_addr = (u8*)virtual->base + new_committed;
 
     // Revoke permissions on full page boundaries
     mprotect(decommit_addr, aligned_amount, PROT_NONE);
@@ -414,7 +459,7 @@ void platform_virtual_unreserve(vvirtual_memory* virtual)
     if (!virtual || !virtual->base) return;
 
     munmap(virtual->base, virtual->reserved);
-    
+   
     virtual->base = PNULL;
     virtual->reserved = 0;
     virtual->committed = 0;
@@ -436,7 +481,7 @@ void* platform_set_memory(void* memory, i32 value, u64 memory_size){
     return memset(memory, value, memory_size);
 }
 
-void* platform_copy_memory(void* dest, void* src, u64 memory_size){
+void* platform_copy_memory(void* dest, const void* src, u64 memory_size){
     return memcpy(dest, src, memory_size);
 }
 
@@ -467,7 +512,8 @@ u32 utf8_to_platform_string(char* utf8_str, platform_string plf_str, u32 plf_str
         memcpy(plf_str, utf8_str, plf_str_len);
         return plf_str_len;
     }
-    if(!utf8_str) return 0; 
+    if(!utf8_str) return 0;
     return strlen(utf8_str);
 }
+
 #endif

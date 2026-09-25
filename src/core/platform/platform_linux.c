@@ -2,20 +2,22 @@
 #include "platform.h"
 
 #if defined(PLATFORM_LINUX)
-#include "../containers/vec.h"
-#include "../logger.h"
-#include <unistd.h>
-#include <sys/mman.h>
-
 #include <stdio.h>
 #include <string.h>
+
+#include <sys/mman.h>
 #include <sys/uio.h>
+#include <unistd.h>
 
 #include <xcb/xcb.h>
 #include <xcb/xproto.h>
 
+#include "../containers/vec.h"
+#include "../logger.h"
+
 static platform_state* state_ptr;
 typedef char* platform_string_internal;
+static vwindow *vwindow_from_xcb_window_t(xcb_window_t handle, u64 *out_index);
 
 typedef struct linux_handle_info {
   xcb_connection_t *connection;
@@ -69,7 +71,7 @@ b8 platform_initialize()
     for (int i = 0; i < screen_num; ++i) {
         xcb_screen_next(&iter);
     }
-    
+
     state_ptr->handle.connection = connection;
     state_ptr->handle.screen = iter.data;
     state_ptr->window_resize_callback = PNULL;
@@ -81,6 +83,7 @@ b8 platform_initialize()
 
 void platform_uninitalize(){
     if(!state_ptr){
+        VFATAL("Double free corruption");
         return;
     }
 
@@ -242,16 +245,12 @@ void platform_window_destroy(vwindow *window) {
     for (u32 i = 0; i < len; ++i) {
       if (state_ptr->windows[i] == window) {
         xcb_destroy_window(state_ptr->handle.connection,
-            window->platform_state->window);
-            free(window->platform_state);
-            window->platform_state = PNULL;
-            //[0][NULL][2][3][4]...
-            //   ^--freed window
-            // In platform_window_create I call darray_push(state_ptr->windows, out_handle);
-            // this could break because old indexes could not be resued, though it breaks from many creates and destroys.
-            state_ptr->windows[i] = PNULL;
-            return;
-        }
+                           window->platform_state->window);
+        free(window->platform_state);
+        window->platform_state = PNULL;
+        state_ptr->windows[i] = PNULL;
+        return;
+      }
     }
     VERROR("Destroying a window that was somehow not registered with the platform layer.\n");
     xcb_destroy_window(state_ptr->handle.connection,
@@ -260,28 +259,15 @@ void platform_window_destroy(vwindow *window) {
   }
 }
 
-static vwindow *vwindow_from_xcb_window_t(xcb_window_t handle, u64 *out_index) {
-  for (u64 i = 0; i < vec_length(state_ptr->windows); i++) {
-    if (!state_ptr->windows[i]) {
-            continue;
-    }
-    if (state_ptr->windows[i]->platform_state->window == handle) {
-      if (out_index) {
-        *out_index = i;
-      }
-      return state_ptr->windows[i];
-    }
-  }
-  return 0;
-}
-
-void platform_window_present_frame(vwindow* window, u8* pixel_map, u32 width, u32 height, u32 x, u32 y)
+void platform_window_present_frame(vwindow* window, u8* pixel_map)
 {
     vwindow_platform_state *window_state = window->platform_state;
     xcb_put_image(state_ptr->handle.connection, 
         XCB_IMAGE_FORMAT_Z_PIXMAP, 
-        window_state->window, window_state->gcontext, width, height, x, y, 0, state_ptr->handle.screen->root_depth, 
-        width*height*sizeof(u32), pixel_map
+        window_state->window, window_state->gcontext, 
+        window->width, window->height, 0, 0, 
+        0, state_ptr->handle.screen->root_depth, 
+        window->width*window->height*sizeof(u32), pixel_map
     );
 
     xcb_flush(state_ptr->handle.connection);
@@ -333,27 +319,6 @@ void platform_set_window_resize_callback(
 void platform_set_window_close_callback(
     platform_window_close_callback callback) {
   state_ptr->window_close_callback = callback;
-}
-
-u32 platform_string_to_utf8(platform_string plf_str, char* utf8_str, u32 utf8_str_len)
-{
-    if(utf8_str_len){
-        memcpy(utf8_str, plf_str, utf8_str_len);
-        return utf8_str_len;
-    }
-
-    if(!plf_str) return 0;
-    return strlen(plf_str);
-}
-
-u32 utf8_to_platform_string(char* utf8_str, platform_string plf_str, u32 plf_str_len)
-{
-    if(plf_str_len){
-        memcpy(plf_str, utf8_str, plf_str_len);
-        return plf_str_len;
-    }
-    if(!utf8_str) return 0; 
-    return strlen(utf8_str);
 }
 
 void platform_write_console(CONSOLE_SINK sink, platform_string message){
@@ -463,7 +428,44 @@ void* platform_set_memory(void* memory, i32 value, u64 memory_size){
     return memset(memory, value, memory_size);
 }
 
-void* platform_copy_memory(void* dest, void* src, u64 memory_size){
+void* platform_copy_memory(void* dest, const void* src, u64 memory_size){
     return memcpy(dest, src, memory_size);
 }
+
+u32 platform_string_to_utf8(platform_string plf_str, char* utf8_str, u32 utf8_str_len)
+{
+    if(utf8_str_len){
+        memcpy(utf8_str, plf_str, utf8_str_len);
+        return utf8_str_len;
+    }
+
+    if(!plf_str) return 0;
+    return strlen(plf_str);
+}
+
+u32 utf8_to_platform_string(char* utf8_str, platform_string plf_str, u32 plf_str_len)
+{
+    if(plf_str_len){
+        memcpy(plf_str, utf8_str, plf_str_len);
+        return plf_str_len;
+    }
+    if(!utf8_str) return 0; 
+    return strlen(utf8_str);
+}
+
+static vwindow *vwindow_from_xcb_window_t(xcb_window_t handle, u64 *out_index) {
+  for (u64 i = 0; i < vec_length(state_ptr->windows); i++) {
+    if (!state_ptr->windows[i]) {
+            continue;
+    }
+    if (state_ptr->windows[i]->platform_state->window == handle) {
+      if (out_index) {
+        *out_index = i;
+      }
+      return state_ptr->windows[i];
+    }
+  }
+  return 0;
+}
+
 #endif
