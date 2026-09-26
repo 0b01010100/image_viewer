@@ -12,35 +12,13 @@ Pretty much an experiment with using framebuffers for rendering without the used
 
 `xcb_put_image` vs. `xcb_shm_put_image`
 
-`darray/vec` has holes in it when I destroy the window.
+## strings
 
 If UTF is different for Windows vs. Linux and macOS, how about during debug time having macOS and Linux allocate `string_length * 2` to ensure the program has enough memory to begin with, and in release setting it back to `string_length * 1`? This would be a guard to ensure the code also works on Windows.
 
 One thing that is off is that Windows needs a memory allocation every time the application communicates with the platform layer for string operations. That creates inconsistency in how much memory should be allocated for the application. Maybe I am wrong, but the allocations for an app should be almost constant across platforms.
 
 Maybe a scratch arena or thread-local storage for the window's strings.
-
-May want to consider `GetMessageW` over `PeekMessageW`.
-
-`xcb_wait_for_event` over `xcb_poll_for_event`.
-
-## MOST OF ALL: FIX ALLOCATION
-
-Because allocation is inconsistent.
-
-```text
-malloc 
-platform_allocate
-virtual_reserve / virtual_commit
-```
-Come back to logger. I feel logging and any output system should not have to rely on allocations to work. Its one and only job should be logging selected things such as `Win32_DebugString`, `platform_console`, or `output.txt`.
-
-As of now there are 3 big allocations happing and I think I can get ride of one:
-    - Big allocation for framebuffer: memory allocation = dynaiclly scales when the window extensed to a new size.
-    - Orginal Image: memory allocation type = static
-    - The main Image: memory allocation type = static for image itself stays the same.
-
-    This plan is to not not have a main Image buffer and sample the original image onto the presetn buffer directly instead of sample to main image and them copy to spefcail cordante of the framebuffer. gotta learn MORE math i don't know to make this work.
 
 It is too much work to handle a generic `platform_string`. I think it would be better to define something specifically for each window platform to handle its UTF wide-character strings.
 
@@ -71,5 +49,37 @@ For example, instead of having a generic `platform_string`, the Windows platform
 
 For macOS, I need to look more into `NSString`. What I think is happening is that macOS is not necessarily using UTF-8 everywhere, but rather the APIs it uses, such as Cocoa/Foundation, work with UTF-16-style Unicode strings.
 
-macos seems to segfault unexaptedly but not enoguth for me to measure pridecitable to know where the error. after leving the app for over 7 mintues and then clsoing i think that when it segfaulted. will have to test this later. in debug the last printed message was "[DEBUG]: window closed.
-zsh: segmentation fault  ./prog ../examples/T.jpeg"
+# Event/Message Loop
+May want to consider `GetMessageW` over `PeekMessageW`.
+
+`xcb_wait_for_event` over `xcb_poll_for_event`.
+
+## MOST OF ALL: FIX ALLOCATION
+
+Because allocation is inconsistent.
+
+```text
+malloc 
+platform_allocate
+virtual_reserve / virtual_commit
+```
+Come back to logger. I feel logging and any output system should not have to rely on allocations to work. Its one and only job should be logging selected things such as `Win32_DebugString`, `platform_console`, or `output.txt`.
+
+## Other
+
+As of now there are 3 big allocations happing and I think I can get ride of one:
+    - Big allocation for framebuffer: memory allocation = dynaiclly scales when the window extensed to a new size.
+    - Orginal Image: memory allocation type = static
+    - The main Image: memory allocation type = static for image itself stays the same.
+
+    This plan is to not not have a main Image buffer and sample the original image onto the presetn buffer directly instead of sample to main image and them copy to spefcail cordante of the framebuffer. gotta learn MORE math i don't know to make this work.
+
+`darray/vec` has holes in it when I destroy the window.
+
+macOS seems to segfault unexpectedly, but not frequently enough for me to predictably reproduce it or determine where the error is. After leaving the app running for over 7 minutes and then closing it, I think that’s when it segfaulted. I’ll have to test this more later.
+
+In debug, the last printed message was:
+
+[DEBUG]: window closed.
+
+zsh: segmentation fault ./prog ../examples/T.jpeg

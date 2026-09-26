@@ -1,6 +1,4 @@
-A cross-platform image viewer for Windows, macOS, and Linux.
-
-
+A cross-platform image viewer for macOS, Linux, and Windows.
 
 <h2>macOS</h2>
 
