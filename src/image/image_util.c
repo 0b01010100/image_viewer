@@ -39,6 +39,59 @@ void* clear_color(Image* bitmap, i32 c) {
     return bitmap->pixels;
 }
 
+void blit_nearest(Image target,
+                  const Image src,
+                  i32 dst_x, i32 dst_y,
+                  u32 dst_w, u32 dst_h)
+{
+    u32 start_x = 0;
+    u32 start_y = 0;
+
+    u32 copy_w = dst_w;
+    u32 copy_h = dst_h;
+
+    if (dst_x < 0) {
+        start_x = (u32)-dst_x;
+        copy_w -= start_x;
+        dst_x = 0;
+    }
+
+    if (dst_y < 0) {
+        start_y = (u32)-dst_y;
+        copy_h -= start_y;
+        dst_y = 0;
+    }
+
+    if ((u32)dst_x >= target.width ||
+        (u32)dst_y >= target.height)
+        return;
+
+    if (dst_x + copy_w > target.width)
+        copy_w = target.width - dst_x;
+
+    if (dst_y + copy_h > target.height)
+        copy_h = target.height - dst_y;
+
+    for (u32 y = 0; y < copy_h; ++y) {
+        u32 dst_y_pos = start_y + y;
+        u32 src_y = dst_y_pos * src.height / dst_h;
+
+        for (u32 x = 0; x < copy_w; ++x) {
+            u32 dst_x_pos = start_x + x;
+            u32 src_x = dst_x_pos * src.width / dst_w;
+
+            target.pixels[
+                (y + dst_y) * target.width +
+                (x + dst_x)
+            ] =
+                src.pixels[
+                    src_y * src.width +
+                    src_x
+                ];
+        }
+    }
+}
+
 void blit(Image dst,
           const Image src,
           i32 dst_x, i32 dst_y)
