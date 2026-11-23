@@ -4,8 +4,9 @@ ifneq ($(OS),Windows_NT)
     UNAME_S := $(shell uname -s)
 endif
 
-DEFINES = 
-CFLAGS = #-fsanitize=address
+DEFINES =
+# for win32 the prgram crash if clang_rt.asan_dynamic-x86_64.dll is not present
+CFLAGS = -Wall -Werror #-fsanitize=address
 LDFLAGS =
 ifeq ($(OS),Windows_NT)
     PLATFORM := win32
@@ -13,10 +14,9 @@ ifeq ($(OS),Windows_NT)
 	# windows is weird
     HAS_SH := $(shell where sh.exe 2>nul)
     ifeq ($(HAS_SH),)
-        $(info Using CMD commands.)
+        $(info Using Command Prompt commands.)
         rwildcard=$(wildcard $1$2) $(foreach d,$(wildcard $1*),$(call rwildcard,$d/,$2))
         SRC := $(call rwildcard,src,*.c) # $(shell where.exe /r src *.c)
-        LDFLAGS += -luser32 -lgdi32 -lkernel32
         MK = if not exist "$(subst /,\,$1)" mkdir "$(subst /,\,$1)"
         RM = if exist "$(subst /,\,$1)" rd /s /q "$(subst /,\,$1)"
     else
@@ -24,6 +24,9 @@ ifeq ($(OS),Windows_NT)
         MK = mkdir -p $1
         RM = rm -rf $1
     endif
+        DEFINES += -DPLATFORM_WIN32_CONSOLE 
+		LDFLAGS += -luser32 -lgdi32 -lkernel32
+		CFLAGS += -D_CRT_SECURE_NO_WARNINGS # Commback to this macro
 else
     ifeq ($(UNAME_S),Linux)
         PLATFORM := linux
@@ -52,12 +55,10 @@ OBJ += $(patsubst src/%.m,$(BUILD)/%.m.o,$(filter %.m,$(SRC)))
 
 TARGET := $(BIN)/prog$(EXT)
 
-
 release: $(TARGET)
 
-debug: CFLAGS += -g
+debug: CFLAGS += -g -O0
 debug: $(TARGET)
-
 
 $(TARGET): $(OBJ)
 	@$(call MK,$(BIN))

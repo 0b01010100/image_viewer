@@ -1,11 +1,10 @@
-#include "../core/platform/platform.h"
 #include "image_util.h"
-void* swizzle_rgba_to_bgra_horizontal(Image* src)
-{
-    if (!src || !src->pixels)
-        return PNULL;
-
-    u8* pixels = (u8*)src->pixels;
+#include "../core/platform/platform.h"
+void *swizzle_rgba_to_bgra_horizontal(Image *src) {
+    if (!src || !src->pixels) {
+        return nullptr;
+    }
+    u8 *pixels = (u8 *)src->pixels;
 
     u64 size = (u64)src->width * src->height;
 
@@ -30,20 +29,17 @@ void image_resize_nearest(const Image *src, Image dst) {
     }
 }
 
-
-void* clear_color(Image* bitmap, i32 c) {
-    if(!bitmap){
-        return PNULL;
+void *clear_color(Image *bitmap, i32 color) {
+    if (!bitmap) {
+        return nullptr;
     }
-    platform_set_memory(bitmap->pixels, c, bitmap->width * bitmap->height * sizeof(u32));
+    platform_set_memory(bitmap->pixels, color,
+                        (u64)(bitmap->width * bitmap->height) * sizeof(u32));
     return bitmap->pixels;
 }
 
-void blit_nearest(Image target,
-                  const Image src,
-                  i32 dst_x, i32 dst_y,
-                  u32 dst_w, u32 dst_h)
-{
+void blit_nearest(Image *target, const Image *src, i32 dst_x, i32 dst_y,
+                  u32 dst_w, u32 dst_h) {
     u32 start_x = 0;
     u32 start_y = 0;
 
@@ -62,44 +58,35 @@ void blit_nearest(Image target,
         dst_y = 0;
     }
 
-    if ((u32)dst_x >= target.width ||
-        (u32)dst_y >= target.height)
+    if ((u32)dst_x >= target->width || (u32)dst_y >= target->height) {
         return;
+    }
+    if (dst_x + copy_w > target->width) {
+        copy_w = target->width - dst_x;
+    }
 
-    if (dst_x + copy_w > target.width)
-        copy_w = target.width - dst_x;
-
-    if (dst_y + copy_h > target.height)
-        copy_h = target.height - dst_y;
-
+    if (dst_y + copy_h > target->height) {
+        copy_h = target->height - dst_y;
+    }
     for (u32 y = 0; y < copy_h; ++y) {
         u32 dst_y_pos = start_y + y;
-        u32 src_y = dst_y_pos * src.height / dst_h;
+        u32 src_y = dst_y_pos * src->height / dst_h;
 
         for (u32 x = 0; x < copy_w; ++x) {
             u32 dst_x_pos = start_x + x;
-            u32 src_x = dst_x_pos * src.width / dst_w;
+            u32 src_x = dst_x_pos * src->width / dst_w;
 
-            target.pixels[
-                (y + dst_y) * target.width +
-                (x + dst_x)
-            ] =
-                src.pixels[
-                    src_y * src.width +
-                    src_x
-                ];
+            target->pixels[(y + dst_y) * target->width + (x + dst_x)] =
+                src->pixels[src_y * src->width + src_x];
         }
     }
 }
 
-void blit(Image dst,
-          const Image src,
-          i32 dst_x, i32 dst_y)
-{
-    u32 copy_w = src.width;
-    u32 copy_h = src.height;
+void blit(Image *dst, const Image *src, i32 dst_x, i32 dst_y) {
+    u32 copy_w = src->width;
+    u32 copy_h = src->height;
 
-    u8* pixels = (u8*)src.pixels;
+    u8 *pixels = (u8 *)src->pixels;
 
     if (dst_x < 0) {
         pixels += (u64)(-dst_x) * 4;
@@ -108,30 +95,28 @@ void blit(Image dst,
     }
 
     if (dst_y < 0) {
-        pixels += (u64)(-dst_y) * src.width * 4;
+        pixels += (u64)(-dst_y) * src->width * 4;
         copy_h -= (u32)(-dst_y);
         dst_y = 0;
     }
 
-    if ((u32)dst_x >= dst.width || (u32)dst_y >= dst.height)
+    if ((u32)dst_x >= dst->width || (u32)dst_y >= dst->height) {
         return;
-
-    if (dst_x + copy_w > dst.width){
-        copy_w = dst.width - dst_x;
+    }
+    if (dst_x + copy_w > dst->width) {
+        copy_w = dst->width - dst_x;
     }
 
-    if (dst_y + copy_h > dst.height){
-        copy_h = dst.height - dst_y;
+    if (dst_y + copy_h > dst->height) {
+        copy_h = dst->height - dst_y;
     }
 
     for (u32 y = 0; y < copy_h; ++y) {
-        platform_copy_memory(
-            (u8*)dst.pixels +
-                ((u64)(dst_y + y) * dst.width + dst_x) * 4,
+        platform_copy_memory((u8 *)dst->pixels +
+                                 ((u64)(dst_y + y) * dst->width + dst_x) * 4,
 
-            pixels + (u64)y * src.width * 4,
+                             pixels + (u64)y * src->width * 4,
 
-            (u64)copy_w * 4
-        );
+                             (u64)copy_w * 4);
     }
 }

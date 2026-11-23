@@ -1,0 +1,3 @@
+Checks: 'readability-*,bugprone-*'
+
+HeaderFilterRegex: '^src/(?!image/stb_image\.h)'

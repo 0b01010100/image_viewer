@@ -1,5 +1,14 @@
-A cross-platform image viewer for macOS, Linux, and Windows.
+# Image Viewer
 
+A cross-platform image viewer for macOS, Linux, and Windows. Just a learning project
+
+## Build & Run
+
+```bash
+make release
+make debug
+./prog <image-name>
+```
 <h2>macOS</h2>
 
 ![Image viewer running on macOS](media/macOSDemo.png)

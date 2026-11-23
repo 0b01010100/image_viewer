@@ -9,3 +9,11 @@ build/
 # macos stuff
 ._*
 .DS_Store
+
+#cache (clangd, )
+.cache/
+
+# compile_commands.json
+compile_commands.json
+
+nul
